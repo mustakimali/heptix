@@ -5,6 +5,8 @@
 Plays a short sound when you tap or press the touchpad, and a tick as you
 scroll with two fingers. Works on X11 and Wayland (reads the touchpad via evdev).
 
+![heptix settings editor](screenshot.png)
+
 ## Install
 
 ```sh
