@@ -16,7 +16,8 @@ esac
 command -v systemctl >/dev/null || { echo "systemd is required for the background service." >&2; exit 1; }
 
 name="heptix-$arch-unknown-linux-musl.tar.gz"
-url="https://github.com/$REPO/releases/latest/download/$name"
+# HEPTIX_BASE_URL overrides the download location (used for testing).
+url="${HEPTIX_BASE_URL:-https://github.com/$REPO/releases/latest/download}/$name"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -56,9 +57,16 @@ if ! id -nG | tr ' ' '\n' | grep -qx input; then
     echo "  users.users.$USER.extraGroups = [ \"input\" ];"
   else
     echo
-    echo "Adding $USER to the 'input' group (needs sudo) ..."
-    sudo usermod -aG input "$USER"
-    echo "Log out and back in for this to take effect."
+    if getent group input >/dev/null; then
+      echo "Adding $USER to the 'input' group (needs sudo) ..."
+      if sudo usermod -aG input "$USER"; then
+        echo "Log out and back in for this to take effect."
+      else
+        echo "Could not add you to 'input'. Run: sudo usermod -aG input $USER" >&2
+      fi
+    else
+      echo "No 'input' group on this system; make sure your user can read /dev/input/event*." >&2
+    fi
   fi
   echo "heptix will start automatically at your next login."
 else
