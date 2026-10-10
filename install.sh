@@ -31,6 +31,42 @@ case "$(uname -m)" in
 esac
 command -v systemctl >/dev/null || { echo "systemd is required for the background service." >&2; exit 1; }
 
+# heptix plays sound through pw-cat, paplay or aplay; try to install the one
+# matching the running sound server if none is present.
+ensure_audio_player() {
+  for p in pw-cat paplay aplay; do command -v "$p" >/dev/null 2>&1 && return 0; done
+  if [ -e /etc/NIXOS ]; then
+    echo "No audio player found. On NixOS, add pipewire to your system packages." >&2
+    return 0
+  fi
+  if pgrep -x pipewire >/dev/null 2>&1; then server=pipewire
+  elif pgrep -x pulseaudio >/dev/null 2>&1; then server=pulse
+  else server=alsa; fi
+  if command -v apt-get >/dev/null 2>&1; then
+    install_cmd="apt-get install -y"
+    case $server in pipewire) pkg=pipewire-bin ;; pulse) pkg=pulseaudio-utils ;; *) pkg=alsa-utils ;; esac
+  elif command -v dnf >/dev/null 2>&1; then
+    install_cmd="dnf install -y"
+    case $server in pipewire) pkg=pipewire-utils ;; pulse) pkg=pulseaudio-utils ;; *) pkg=alsa-utils ;; esac
+  elif command -v pacman >/dev/null 2>&1; then
+    install_cmd="pacman -S --needed --noconfirm"
+    case $server in pipewire) pkg=pipewire ;; pulse) pkg=libpulse ;; *) pkg=alsa-utils ;; esac
+  elif command -v zypper >/dev/null 2>&1; then
+    install_cmd="zypper --non-interactive install"
+    case $server in pipewire) pkg=pipewire-tools ;; pulse) pkg=pulseaudio-utils ;; *) pkg=alsa-utils ;; esac
+  else
+    echo "No audio player found (pw-cat, paplay or aplay). Install one for your sound server." >&2
+    return 0
+  fi
+  sudo_cmd=""
+  [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+  echo "No audio player found; installing $pkg (may ask for your password) ..."
+  # shellcheck disable=SC2086
+  if ! $sudo_cmd $install_cmd "$pkg"; then
+    echo "Could not install $pkg. Install pw-cat, paplay or aplay yourself, or heptix will be silent." >&2
+  fi
+}
+
 name="heptix-$arch-unknown-linux-musl.tar.gz"
 # HEPTIX_BASE_URL overrides the download location (used for testing).
 url="${HEPTIX_BASE_URL:-https://github.com/$REPO/releases/latest/download}/$name"
@@ -68,6 +104,8 @@ UNIT
 
 systemctl --user daemon-reload
 systemctl --user enable heptix.service >/dev/null 2>&1
+
+ensure_audio_player
 
 # Reading /dev/input needs the 'input' group.
 if ! id -nG | tr ' ' '\n' | grep -qx input; then

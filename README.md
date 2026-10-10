@@ -18,7 +18,9 @@ curl -fsSL https://raw.githubusercontent.com/mustakimali/heptix/main/install.sh 
 
 Installs the latest release to `~/.local/bin`, runs it as a systemd user
 service, and opens the settings editor. Needs systemd and an audio server
-(PipeWire, PulseAudio or ALSA).
+(PipeWire, PulseAudio or ALSA). If no audio player (`pw-cat`, `paplay` or
+`aplay`) is installed, the script installs the one matching your sound server
+with `apt`, `dnf`, `pacman` or `zypper` (asks for sudo).
 
 **From source** (needs a Rust toolchain):
 
@@ -34,6 +36,18 @@ Pass options with `make install ARGS="--keyboard-sound thock --volume 80"`.
 Reading the touchpad needs the `input` group. The script adds you with `sudo`
 (log out and in afterwards). On NixOS add `"input"` to
 `users.users.<you>.extraGroups` instead.
+
+## Dependencies
+
+The release binary is a single static file with all sounds built in. At runtime
+it needs:
+
+- Linux with systemd (for the background service).
+- An audio player on `PATH`: `pw-cat` (PipeWire), `paplay` (PulseAudio) or
+  `aplay` (ALSA). The installer adds one if missing.
+- Membership in the `input` group, to read `/dev/input/event*`.
+
+Building from source also needs a Rust toolchain.
 
 ## Use
 

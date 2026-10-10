@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `install.sh` installs a missing audio player (`pw-cat`, `paplay` or `aplay`,
+  matching the running sound server) using `apt`, `dnf`, `pacman` or `zypper`.
+
 ## [0.3.0] - 2026-10-10
 
 ### Changed
