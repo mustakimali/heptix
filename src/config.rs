@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// heptix - the missing haptic feedback for Linux!
+// Copyright (C) 2026 M Mustakim Ali
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License version 2 as
+// published by the Free Software Foundation.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, see <https://www.gnu.org/licenses/>.
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -29,7 +45,7 @@ impl Default for Settings {
             scroll_volume: 35,
             max_ms: 200,
             scroll_ticks: 24,
-            keyboard_sound: "off".into(),
+            keyboard_sound: "bucklespring".into(),
             keyboard_volume: 40,
         }
     }
@@ -99,7 +115,7 @@ impl Settings {
         format!(
             "# heptix - the missing haptic feedback for Linux! Settings. Run `heptix` with no arguments to edit them interactively.\n\
              \n\
-             # Tap and button-press sound: haptic, tock, tick, thud, crown, or a path to a 16-bit WAV\n\
+             # Tap and button-press sound: haptic, tock, tick, thud, crown, wheel_of_time, or a path to a 16-bit WAV\n\
              sound = \"{}\"\n\
              # Two-finger scroll sound: same choices, or \"off\"\n\
              scroll_sound = \"{}\"\n\
@@ -111,7 +127,8 @@ impl Settings {
              max_ms = {}\n\
              # Scroll ticks per pad height (higher = denser)\n\
              scroll_ticks = {}\n\
-             # Mechanical keyboard sound: off, thock, clicky, linear. Only the fact that a key went\n\
+             # Mechanical keyboard sound (default bucklespring; set \"off\" to disable): off, thock, clicky, linear, buckling, bucklespring (recorded Model M),\n\
+             # or a directory of <hex keycode>-0.wav / -1.wav files. Only the fact that a key went\n\
              # down or up is used to pick a sound; keystrokes are never logged, stored or sent anywhere.\n\
              keyboard_sound = \"{}\"\n\
              # Keyboard volume, 0-100\n\
@@ -171,9 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_sound_is_off_by_default() {
-        assert_eq!(Settings::default().keyboard_sound, "off");
-        assert_eq!(Settings::parse("volume = 10\n").0.keyboard_sound, "off");
+    fn keyboard_sound_defaults_to_bucklespring() {
+        assert_eq!(Settings::default().keyboard_sound, "bucklespring");
+        assert_eq!(Settings::parse("volume = 10\n").0.keyboard_sound, "bucklespring");
+        assert_eq!(Settings::parse("keyboard_sound = \"off\"\n").0.keyboard_sound, "off");
     }
 
     #[test]

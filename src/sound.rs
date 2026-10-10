@@ -1,8 +1,28 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// heptix - the missing haptic feedback for Linux!
+// Copyright (C) 2026 M Mustakim Ali
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License version 2 as
+// published by the Free Software Foundation.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, see <https://www.gnu.org/licenses/>.
+
 use std::f32::consts::TAU;
 use std::fs;
 
 pub const RATE: u32 = 48_000;
-pub const PRESETS: &[&str] = &["haptic", "tock", "tick", "thud", "crown"];
+/// Recorded sounds embedded in the binary (see `assets/README.md`).
+static WHEEL_OF_TIME: &[u8] = include_bytes!("../assets/wheel_of_time.caf");
+
+/// Every built-in sound, for menus.
+pub const SOUNDS: &[&str] = &["haptic", "tock", "tick", "thud", "crown", "wheel_of_time"];
 
 /// Signed 16-bit little-endian mono at `RATE`, ready to write to an audio sink.
 pub type Pcm = Vec<u8>;
@@ -126,7 +146,7 @@ pub fn from_wav(path: &str, volume: u32) -> Result<Pcm, String> {
 }
 
 /// Linear resample to the sink rate, then convert to PCM.
-fn finish(mono: &[f32], rate: u32, volume: u32) -> Pcm {
+pub fn finish(mono: &[f32], rate: u32, volume: u32) -> Pcm {
     if mono.is_empty() {
         return Vec::new();
     }
@@ -205,6 +225,9 @@ pub fn load(spec: &str, volume: u32) -> Result<Pcm, String> {
     if let Some(p) = preset(spec, volume) {
         return Ok(p);
     }
+    if spec == "wheel_of_time" {
+        return from_caf_bytes(WHEEL_OF_TIME, volume);
+    }
     let lower = spec.to_lowercase();
     if lower.ends_with(".caf") {
         let bytes = fs::read(spec).map_err(|e| format!("{spec}: {e}"))?;
@@ -213,7 +236,7 @@ pub fn load(spec: &str, volume: u32) -> Result<Pcm, String> {
     if spec.contains('/') || lower.ends_with(".wav") {
         return from_wav(spec, volume);
     }
-    Err(format!("unknown sound '{spec}' (presets: {}; or a .wav path)", PRESETS.join(", ")))
+    Err(format!("unknown sound '{spec}' (built-in: {}; or a .wav/.caf path)", SOUNDS.join(", ")))
 }
 
 #[cfg(test)]
@@ -222,7 +245,7 @@ mod tests {
 
     #[test]
     fn presets_render_nonempty_and_scale_with_volume() {
-        for name in PRESETS {
+        for name in SOUNDS.iter().filter(|n| **n != "wheel_of_time") {
             let loud = preset(name, 100).unwrap();
             let quiet = preset(name, 10).unwrap();
             assert!(!loud.is_empty());
@@ -250,6 +273,15 @@ mod tests {
         let s: Vec<i16> = pcm.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
         assert_eq!(s.len(), 3);
         assert!(s[1] > 10_000 && s[2] < -10_000, "{s:?}");
+    }
+
+    #[test]
+    fn wheel_of_time_is_embedded_and_scales_with_volume() {
+        let loud = load("wheel_of_time", 100).unwrap();
+        let quiet = load("wheel_of_time", 10).unwrap();
+        let peak = |p: &Pcm| p.chunks_exact(2).map(|s| i16::from_le_bytes([s[0], s[1]]).abs()).max().unwrap();
+        assert!(loud.len() > 1000);
+        assert!(peak(&loud) > peak(&quiet) * 5);
     }
 
     #[test]

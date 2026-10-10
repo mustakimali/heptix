@@ -1,9 +1,25 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// heptix - the missing haptic feedback for Linux!
+// Copyright (C) 2026 M Mustakim Ali
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License version 2 as
+// published by the Free Software Foundation.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, see <https://www.gnu.org/licenses/>.
+
 //! Minimal settings editor: raw-mode terminal, ANSI drawing, no TUI crate.
 
 use crate::config::Settings;
 use crate::keyboard::{self, Keyboard};
 use crate::player::Player;
-use crate::sound::{self, PRESETS};
+use crate::sound::{self, SOUNDS};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::Command;
@@ -88,10 +104,10 @@ fn read_key() -> Option<Key> {
 fn options(row: usize, current: &str) -> Vec<String> {
     let mut v: Vec<String> = if row == 6 {
         let mut v = vec!["off".to_string()];
-        v.extend(keyboard::PROFILES.iter().map(|s| s.to_string()));
+        v.extend(keyboard::SOUNDS.iter().map(|s| s.to_string()));
         v
     } else {
-        PRESETS.iter().map(|s| s.to_string()).collect()
+        SOUNDS.iter().map(|s| s.to_string()).collect()
     };
     if row == 1 {
         v.push("off".into());
@@ -198,7 +214,7 @@ fn draw(s: &Settings, sel: usize, dirty: bool, path: &Path, msg: &str) {
             out += &format!("{line}\r\n");
         }
     }
-    out += "\r\n \x1b[2mKeyboard sound is off by default. It only reacts to a key going down or up to pick a click;\r\n";
+    out += "\r\n \x1b[2mKeyboard sound is on by default (set it to off to disable). It only reacts to a key\r\n going down or up to pick a click;\r\n";
     out += " keystrokes are never logged, stored or sent anywhere.\x1b[0m\r\n";
     out += "\r\n \x1b[2m↑/↓ select   ←/→ change (plays preview)   space preview\r\n";
     out += " p preview all   s save & apply   q quit\x1b[0m\r\n\r\n";

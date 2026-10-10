@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// heptix - the missing haptic feedback for Linux!
+// Copyright (C) 2026 M Mustakim Ali
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License version 2 as
+// published by the Free Software Foundation.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, see <https://www.gnu.org/licenses/>.
+
 mod config;
 mod keyboard;
 mod player;
@@ -28,10 +44,11 @@ OPTIONS:
   --config <PATH>     Use this config file
   --list              List detected touchpads and exit
   --device <PATH>     Watch this /dev/input/eventN instead of auto-detecting
-  --sound <NAME|FILE> Tap sound: haptic, tock, tick, thud, crown, or a WAV/CAF file
+  --sound <NAME|FILE> Tap sound: haptic, tock, tick, thud, crown, wheel_of_time, or a WAV/CAF file
   --scroll-sound <X>  Two-finger scroll sound: any of the above, or off
   --scroll-ticks <N>  Scroll ticks per pad height (higher = denser)
-  --keyboard-sound <X>  Mechanical keyboard sound: thock, clicky, linear, or off (default off)
+  --keyboard-sound <X>  Keyboard sound: thock, clicky, linear, buckling, bucklespring
+                      (recorded), a sample directory, or off (default bucklespring)
   --keyboard-volume <0-100>  Keyboard volume
   --volume <0-100>    Tap volume
   --scroll-volume <0-100>  Scroll tick volume

@@ -1,9 +1,9 @@
 [package]
 name = "heptix"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "The missing haptic feedback for Linux: touchpad tap, click and scroll sounds"
-license = "MIT"
+license = "GPL-2.0-only"
 repository = "https://github.com/mustakimali/heptix"
 readme = "README.md"
 keywords = ["touchpad", "haptic", "audio", "linux", "evdev"]

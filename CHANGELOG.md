@@ -3,6 +3,30 @@
 All notable changes to heptix. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.3.0] - 2026-10-10
+
+### Changed
+- Keyboard sound is now on by default, using `bucklespring`. Existing config
+  files that already contain `keyboard_sound` keep their value; set
+  `keyboard_sound = "off"` to disable.
+- Relicensed from MIT to GPL-2.0-only, so GPL-licensed sound samples (such as
+  bucklespring's) can be bundled. Releases up to 0.2.0 remain available under MIT.
+- Every source file now carries a GPL notice and SPDX identifier.
+
+### Added
+- `wheel_of_time` built-in sound (a recorded picker-wheel tick, intended for
+  scrolling), embedded in the binary.
+- `buckling` keyboard sound: a synthesised IBM Model M-style buckling spring
+  with a metallic spring ping and steel-plate bottom-out.
+- `bucklespring` keyboard sound: the recorded IBM Model M samples from
+  bucklespring, embedded in the binary (adds about 5.5 MB). See `assets/README.md`.
+- Recorded keyboard sounds: set `keyboard_sound` to a directory of
+  `<hex keycode>-0.wav` (press) and `<hex keycode>-1.wav` (release) files, the
+  layout of bucklespring's `wav` folder. Keys without a file borrow another
+  key's sample.
+
 ## [0.2.0] - 2026-10-10
 
 ### Added
