@@ -3,7 +3,8 @@
 **The missing haptic feedback for Linux!**
 
 Plays a short sound when you tap or press the touchpad, and a tick as you
-scroll with two fingers. Works on X11 and Wayland (reads the touchpad via evdev).
+scroll with two fingers. Optionally also plays mechanical keyboard sounds as you
+type. Works on X11 and Wayland (reads input devices via evdev).
 
 ![heptix settings editor](screenshot.png)
 
@@ -28,6 +29,11 @@ Reading the touchpad needs the `input` group. The script adds you with `sudo`
 - `heptix --run` runs with the saved settings; other options override them
   (`heptix --help`).
 - Settings: `~/.config/heptix/config.toml` (created on first run).
+- Keyboard sounds (off by default): set `keyboard_sound` to `thock`, `clicky`
+  or `linear` (or use the editor). Separate down/up strokes, different sounds
+  for space and wide keys, and slight per-key pitch and level variation.
+  Keystrokes are never logged, stored or sent anywhere: an event only picks
+  which click to play, and `--verbose` never prints key presses.
 - Sounds: `thud` (default tap), `haptic`, `tock`, `tick`, `crown` (default
   scroll), or your own 16-bit WAV / linear-PCM CAF file path.
 

@@ -14,6 +14,10 @@ pub struct Settings {
     pub scroll_volume: u32,
     pub max_ms: u64,
     pub scroll_ticks: i32,
+    /// Mechanical keyboard sound profile, or "off".
+    pub keyboard_sound: String,
+    /// Keyboard volume, 0-100.
+    pub keyboard_volume: u32,
 }
 
 impl Default for Settings {
@@ -25,6 +29,8 @@ impl Default for Settings {
             scroll_volume: 35,
             max_ms: 200,
             scroll_ticks: 24,
+            keyboard_sound: "off".into(),
+            keyboard_volume: 40,
         }
     }
 }
@@ -68,6 +74,11 @@ impl Settings {
                     s.scroll_sound = value;
                     true
                 }
+                "keyboard_sound" => {
+                    s.keyboard_sound = value;
+                    true
+                }
+                "keyboard_volume" => value.parse().map(|v: u32| s.keyboard_volume = v.min(100)).is_ok(),
                 "scroll_volume" => value.parse().map(|v: u32| s.scroll_volume = v.min(100)).is_ok(),
                 "volume" => value.parse().map(|v: u32| s.volume = v.min(100)).is_ok(),
                 "max_ms" => value.parse().map(|v: u64| s.max_ms = v.clamp(50, 1000)).is_ok(),
@@ -99,8 +110,20 @@ impl Settings {
              # Longest touch (ms) still counted as a tap\n\
              max_ms = {}\n\
              # Scroll ticks per pad height (higher = denser)\n\
-             scroll_ticks = {}\n",
-            self.sound, self.scroll_sound, self.volume, self.scroll_volume, self.max_ms, self.scroll_ticks
+             scroll_ticks = {}\n\
+             # Mechanical keyboard sound: off, thock, clicky, linear. Only the fact that a key went\n\
+             # down or up is used to pick a sound; keystrokes are never logged, stored or sent anywhere.\n\
+             keyboard_sound = \"{}\"\n\
+             # Keyboard volume, 0-100\n\
+             keyboard_volume = {}\n",
+            self.sound,
+            self.scroll_sound,
+            self.volume,
+            self.scroll_volume,
+            self.max_ms,
+            self.scroll_ticks,
+            self.keyboard_sound,
+            self.keyboard_volume
         )
     }
 
@@ -134,7 +157,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let s = Settings { sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40 };
+        let s = Settings { sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40, keyboard_sound: "clicky".into(), keyboard_volume: 70 };
         let (back, warn) = Settings::parse(&s.to_toml());
         assert_eq!(back, s);
         assert!(warn.is_empty());
@@ -145,6 +168,12 @@ mod tests {
         let (s, warn) = Settings::parse("volume = loud\nnope = 1\nvolume = 500\n");
         assert_eq!(s.volume, 100);
         assert_eq!(warn.len(), 2);
+    }
+
+    #[test]
+    fn keyboard_sound_is_off_by_default() {
+        assert_eq!(Settings::default().keyboard_sound, "off");
+        assert_eq!(Settings::parse("volume = 10\n").0.keyboard_sound, "off");
     }
 
     #[test]

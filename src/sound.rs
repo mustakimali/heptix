@@ -19,7 +19,7 @@ fn render(ms: f32, mut f: impl FnMut(f32, f32) -> f32) -> Vec<f32> {
         .collect()
 }
 
-fn to_pcm(samples: &[f32], volume: u32) -> Pcm {
+pub fn to_pcm(samples: &[f32], volume: u32) -> Pcm {
     let amp = 32767.0 * 0.9 * (volume as f32 / 100.0);
     samples
         .iter()

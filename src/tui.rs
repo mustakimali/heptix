@@ -1,6 +1,7 @@
 //! Minimal settings editor: raw-mode terminal, ANSI drawing, no TUI crate.
 
 use crate::config::Settings;
+use crate::keyboard::{self, Keyboard};
 use crate::player::Player;
 use crate::sound::{self, PRESETS};
 use std::io::{self, Read, Write};
@@ -10,7 +11,16 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-const ROWS: [&str; 6] = ["Tap sound", "Scroll sound", "Tap volume", "Scroll volume", "Max tap length", "Scroll density"];
+const ROWS: [&str; 8] = [
+    "Tap sound",
+    "Scroll sound",
+    "Tap volume",
+    "Scroll volume",
+    "Max tap length",
+    "Scroll density",
+    "Keyboard sound",
+    "Keyboard volume",
+];
 
 struct RawMode(libc::termios);
 
@@ -76,7 +86,13 @@ fn read_key() -> Option<Key> {
 }
 
 fn options(row: usize, current: &str) -> Vec<String> {
-    let mut v: Vec<String> = PRESETS.iter().map(|s| s.to_string()).collect();
+    let mut v: Vec<String> = if row == 6 {
+        let mut v = vec!["off".to_string()];
+        v.extend(keyboard::PROFILES.iter().map(|s| s.to_string()));
+        v
+    } else {
+        PRESETS.iter().map(|s| s.to_string()).collect()
+    };
     if row == 1 {
         v.push("off".into());
     }
@@ -93,8 +109,12 @@ fn step<T: Copy + PartialOrd>(v: T, delta: i64, lo: T, hi: T, as_i: fn(T) -> i64
 
 fn adjust(s: &mut Settings, row: usize, dir: i64) {
     match row {
-        0 | 1 => {
-            let cur = if row == 0 { &mut s.sound } else { &mut s.scroll_sound };
+        0 | 1 | 6 => {
+            let cur = match row {
+                0 => &mut s.sound,
+                1 => &mut s.scroll_sound,
+                _ => &mut s.keyboard_sound,
+            };
             let opts = options(row, cur);
             let i = opts.iter().position(|o| o == cur).unwrap_or(0) as i64;
             let n = (i + dir).rem_euclid(opts.len() as i64) as usize;
@@ -103,6 +123,7 @@ fn adjust(s: &mut Settings, row: usize, dir: i64) {
         2 => s.volume = step(s.volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
         3 => s.scroll_volume = step(s.scroll_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
         4 => s.max_ms = step(s.max_ms, dir * 25, 50, 1000, |v| v as i64, |i| i as u64),
+        7 => s.keyboard_volume = step(s.keyboard_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
         _ => s.scroll_ticks = step(s.scroll_ticks, dir * 2, 2, 200, |v| v as i64, |i| i as i32),
     }
 }
@@ -114,6 +135,8 @@ fn value_text(s: &Settings, row: usize) -> String {
         2 => format!("{}%", s.volume),
         3 => format!("{}%", s.scroll_volume),
         4 => format!("{} ms", s.max_ms),
+        6 => s.keyboard_sound.clone(),
+        7 => format!("{}%", s.keyboard_volume),
         _ => format!("{} per pad height", s.scroll_ticks),
     }
 }
@@ -146,9 +169,18 @@ impl Preview {
         }
     }
 
+    /// A short burst of typing.
+    fn typing(&self, s: &Settings) {
+        if let Ok(mut k) = Keyboard::new(&s.keyboard_sound, s.keyboard_volume) {
+            let player = self.player.clone();
+            thread::spawn(move || k.demo(&player));
+        }
+    }
+
     fn row(&self, s: &Settings, row: usize) {
         match row {
             1 | 3 | 5 => self.scroll(s),
+            6 | 7 => self.typing(s),
             4 => {}
             _ => self.tap(s),
         }
@@ -166,8 +198,10 @@ fn draw(s: &Settings, sel: usize, dirty: bool, path: &Path, msg: &str) {
             out += &format!("{line}\r\n");
         }
     }
+    out += "\r\n \x1b[2mKeyboard sound is off by default. It only reacts to a key going down or up to pick a click;\r\n";
+    out += " keystrokes are never logged, stored or sent anywhere.\x1b[0m\r\n";
     out += "\r\n \x1b[2m↑/↓ select   ←/→ change (plays preview)   space preview\r\n";
-    out += " p preview tap + scroll   s save & apply   q quit\x1b[0m\r\n\r\n";
+    out += " p preview all   s save & apply   q quit\x1b[0m\r\n\r\n";
     out += &format!(" {}{}\r\n {}\r\n", path.display(), if dirty { "  [unsaved]" } else { "" }, msg);
     print!("{out}");
     let _ = io::stdout().flush();
@@ -212,6 +246,8 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
                 preview.tap(&s);
                 thread::sleep(Duration::from_millis(350));
                 preview.scroll(&s);
+                thread::sleep(Duration::from_millis(350));
+                preview.typing(&s);
             }
             Key::Char('s') => {
                 msg = match s.save(path) {

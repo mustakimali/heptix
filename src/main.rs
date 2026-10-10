@@ -1,4 +1,5 @@
 mod config;
+mod keyboard;
 mod player;
 mod sound;
 mod tap;
@@ -30,13 +31,20 @@ OPTIONS:
   --sound <NAME|FILE> Tap sound: haptic, tock, tick, thud, crown, or a WAV/CAF file
   --scroll-sound <X>  Two-finger scroll sound: any of the above, or off
   --scroll-ticks <N>  Scroll ticks per pad height (higher = denser)
+  --keyboard-sound <X>  Mechanical keyboard sound: thock, clicky, linear, or off (default off)
+  --keyboard-volume <0-100>  Keyboard volume
   --volume <0-100>    Tap volume
   --scroll-volume <0-100>  Scroll tick volume
   --max-ms <MS>       Longest touch still counted as a tap
   --preview           Play the tap and scroll sounds once and exit
-  --verbose           Print every detected tap/scroll
+  --verbose           Print every detected tap/scroll (key presses are never printed)
   -h, --help          Show this help
 ";
+
+enum Msg {
+    Pad(tap::Event),
+    Key(keyboard::KeyEvent),
+}
 
 struct Cli {
     tui: bool,
@@ -77,7 +85,8 @@ fn parse_args() -> Cli {
             "--verbose" => c.verbose = true,
             "--config" => c.config = value("--config").into(),
             "--device" => c.device = Some(value("--device").into()),
-            "--sound" | "--scroll-sound" | "--scroll-ticks" | "--volume" | "--scroll-volume" | "--max-ms" => {
+            "--sound" | "--scroll-sound" | "--scroll-ticks" | "--volume" | "--scroll-volume" | "--max-ms"
+            | "--keyboard-sound" | "--keyboard-volume" => {
                 let v = value(&arg);
                 c.overrides.push((arg.trim_start_matches("--").replace('-', "_"), v));
             }
@@ -157,6 +166,13 @@ fn main() {
     let tap_pcm = Arc::new(load_sound(&settings.sound, settings.volume));
     let scroll_on = settings.scroll_sound != "off";
     let scroll_pcm = scroll_on.then(|| Arc::new(load_sound(&settings.scroll_sound, settings.scroll_volume)));
+    let keyboard_on = settings.keyboard_sound != "off";
+    let keyboard = keyboard_on.then(|| {
+        keyboard::Keyboard::new(&settings.keyboard_sound, settings.keyboard_volume).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            exit(2)
+        })
+    });
     let player = player::Player::start();
 
     if cli.preview {
@@ -169,18 +185,28 @@ fn main() {
             }
         }
         thread::sleep(std::time::Duration::from_millis(400));
+        if let Some(mut k) = keyboard {
+            k.demo(&player);
+            thread::sleep(std::time::Duration::from_millis(400));
+        }
         return;
     }
 
-    if pads.is_empty() {
+    let keyboards: Vec<(PathBuf, Device)> =
+        if keyboard_on { evdev::enumerate().filter(|(_, d)| keyboard::is_keyboard(d)).collect() } else { Vec::new() };
+    if pads.is_empty() && keyboards.is_empty() {
         eprintln!(
-            "no touchpad found (or no permission). Readable devices need membership in the \
-             'input' group; see README."
+            "no touchpad{} found (or no permission). Readable devices need membership in the \
+             'input' group; see README.",
+            if keyboard_on { " or keyboard" } else { "" }
         );
         exit(1);
     }
+    if keyboard_on && keyboards.is_empty() {
+        eprintln!("keyboard sound is on but no keyboard was found (or no permission)");
+    }
 
-    let (tx, rx) = mpsc::channel::<tap::Event>();
+    let (tx, rx) = mpsc::channel::<Msg>();
     for (path, dev) in pads {
         eprintln!("watching {} ({})", path.display(), dev.name().unwrap_or("?"));
         let tx = tx.clone();
@@ -191,20 +217,37 @@ fn main() {
                 if verbose {
                     println!("{event:?}");
                 }
-                let _ = tx.send(event);
+                let _ = tx.send(Msg::Pad(event));
+            }) {
+                eprintln!("{}: {e}", path.display());
+            }
+        });
+    }
+    for (path, dev) in keyboards {
+        eprintln!("watching {} ({})", path.display(), dev.name().unwrap_or("?"));
+        let tx = tx.clone();
+        thread::spawn(move || {
+            if let Err(e) = keyboard::watch(dev, |ev| {
+                let _ = tx.send(Msg::Key(ev));
             }) {
                 eprintln!("{}: {e}", path.display());
             }
         });
     }
     drop(tx);
+    let mut keyboard = keyboard;
     // Ends when every watcher thread has died (e.g. device unplugged).
-    for event in rx {
-        match event {
-            tap::Event::Tap => player.play(&tap_pcm),
-            tap::Event::Scroll => {
+    for msg in rx {
+        match msg {
+            Msg::Pad(tap::Event::Tap) => player.play(&tap_pcm),
+            Msg::Pad(tap::Event::Scroll) => {
                 if let Some(p) = &scroll_pcm {
                     player.play(p);
+                }
+            }
+            Msg::Key(ev) => {
+                if let Some(k) = keyboard.as_mut() {
+                    k.handle(ev, &player);
                 }
             }
         }

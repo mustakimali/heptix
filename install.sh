@@ -39,6 +39,10 @@ After=pipewire.service
 ExecStart=$BIN_DIR/heptix --run
 Restart=on-failure
 RestartSec=2
+# No network: only local unix sockets (the audio server) are allowed.
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+NoNewPrivileges=yes
 # User units get a minimal PATH; heptix needs pw-cat, paplay or aplay.
 Environment=PATH=/run/current-system/sw/bin:/etc/profiles/per-user/%u/bin:/usr/local/bin:/usr/bin:/bin
 
