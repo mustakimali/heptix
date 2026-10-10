@@ -49,6 +49,18 @@ it needs:
 
 Building from source also needs a Rust toolchain.
 
+## Privacy
+
+- Keystrokes are never logged, stored or sent anywhere. For each key event
+  heptix only uses the key code and whether it went down or up, to pick which
+  click to play, and nothing else is kept. `--verbose` never prints key presses.
+- heptix makes no network connections. The background service is also run with
+  the network locked down (`RestrictAddressFamilies=AF_UNIX`,
+  `IPAddressDeny=any`, `NoNewPrivileges=yes` in the systemd unit), so it can
+  only talk to local unix sockets such as your audio server.
+- Keyboard sound is on by default; set `keyboard_sound = "off"` to stop heptix
+  reading keyboards at all.
+
 ## Use
 
 - `heptix` opens the settings editor (sound, volumes, tap length, scroll
