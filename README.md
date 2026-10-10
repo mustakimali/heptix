@@ -10,6 +10,8 @@ scroll with two fingers. Also plays mechanical keyboard sounds as you type
 
 ## Install
 
+**Quick install** (latest release):
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mustakimali/heptix/main/install.sh | sh
 ```
@@ -17,6 +19,17 @@ curl -fsSL https://raw.githubusercontent.com/mustakimali/heptix/main/install.sh 
 Installs the latest release to `~/.local/bin`, runs it as a systemd user
 service, and opens the settings editor. Needs systemd and an audio server
 (PipeWire, PulseAudio or ALSA).
+
+**From source** (needs a Rust toolchain):
+
+```sh
+git clone https://github.com/mustakimali/heptix
+cd heptix
+make install
+```
+
+Builds and installs to `~/.local/bin` and starts the systemd user service.
+Pass options with `make install ARGS="--keyboard-sound thock --volume 80"`.
 
 Reading the touchpad needs the `input` group. The script adds you with `sudo`
 (log out and in afterwards). On NixOS add `"input"` to
@@ -46,7 +59,7 @@ Reading the touchpad needs the `input` group. The script adds you with `sudo`
 
 ```sh
 cargo build --release     # or: nix run github:mustakimali/heptix
-make install              # install + start the service from source
+make install              # install + start the service from source (see Install)
 ```
 
 Uninstall: `systemctl --user disable --now heptix; rm ~/.local/bin/heptix`
