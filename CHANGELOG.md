@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Auto volume mode plays taps, clicks and scroll ticks slightly louder (55 and
+  45, were 45 and 35). The custom-mode defaults for `volume` and
+  `scroll_volume` are raised to match.
+
 ## [0.5.0] - 2026-10-11
 
 ### Added

@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 
 /// Per-sound levels used in `auto` volume mode: the mix between sounds, before
 /// the system-volume compensation.
-pub const AUTO_TAP_VOLUME: u32 = 45;
-pub const AUTO_SCROLL_VOLUME: u32 = 35;
+pub const AUTO_TAP_VOLUME: u32 = 55;
+pub const AUTO_SCROLL_VOLUME: u32 = 45;
 pub const AUTO_KEYBOARD_VOLUME: u32 = 40;
 
 #[derive(Clone, Debug, PartialEq)]
