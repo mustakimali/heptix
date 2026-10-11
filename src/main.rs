@@ -20,6 +20,7 @@ mod keyboard;
 mod player;
 mod sound;
 mod stats;
+mod sysvol;
 mod tap;
 mod tui;
 
@@ -52,9 +53,11 @@ OPTIONS:
   --scroll-ticks <N>  Scroll ticks per pad height (higher = denser)
   --keyboard-sound <X>  Keyboard sound: thock, clicky, linear, buckling, bucklespring
                       (recorded), a sample directory, or off (default bucklespring)
-  --keyboard-volume <0-100>  Keyboard volume
-  --volume <0-100>    Tap volume
-  --scroll-volume <0-100>  Scroll tick volume
+  --volume-mode <M>   auto (follow the system volume) or custom (use the volumes below)
+  --volume <0-100>    Tap volume (custom mode)
+  --scroll-volume <0-100>  Scroll tick volume (custom mode)
+  --keyboard-volume <0-100>  Keyboard volume (custom mode)
+  --auto-reference <10-100>  Auto mode: system volume % up to which sounds play at full level
   --max-ms <MS>       Longest touch still counted as a tap
   --stats             Print your activity stats (keys, taps, scrolling) and exit
   --stats-reset       Delete all stored activity stats and exit
@@ -128,7 +131,7 @@ fn parse_args() -> Cli {
             "--config" => c.config = value("--config").into(),
             "--device" => c.device = Some(value("--device").into()),
             "--sound" | "--scroll-sound" | "--scroll-ticks" | "--volume" | "--scroll-volume" | "--max-ms"
-            | "--keyboard-sound" | "--keyboard-volume" => {
+            | "--keyboard-sound" | "--keyboard-volume" | "--volume-mode" | "--auto-reference" => {
                 let v = value(&arg);
                 c.overrides.push((arg.trim_start_matches("--").replace('-', "_"), v));
             }
@@ -226,12 +229,13 @@ fn main() {
         return;
     }
 
-    let tap_pcm = Arc::new(load_sound(&settings.sound, settings.volume));
+    let (tap_volume, scroll_volume, keyboard_volume) = settings.effective_volumes();
+    let tap_pcm = Arc::new(load_sound(&settings.sound, tap_volume));
     let scroll_on = settings.scroll_sound != "off";
-    let scroll_pcm = scroll_on.then(|| Arc::new(load_sound(&settings.scroll_sound, settings.scroll_volume)));
+    let scroll_pcm = scroll_on.then(|| Arc::new(load_sound(&settings.scroll_sound, scroll_volume)));
     let keyboard_on = settings.keyboard_sound != "off";
     let keyboard = keyboard_on.then(|| {
-        keyboard::Keyboard::new(&settings.keyboard_sound, settings.keyboard_volume).unwrap_or_else(|e| {
+        keyboard::Keyboard::new(&settings.keyboard_sound, keyboard_volume).unwrap_or_else(|e| {
             eprintln!("{e}");
             exit(2)
         })
@@ -239,6 +243,11 @@ fn main() {
     let player = player::Player::start();
 
     if cli.preview {
+        if settings.is_auto_volume() {
+            if let Some(r) = sysvol::query() {
+                player.set_master(sysvol::compensation(r.amp, settings.auto_reference));
+            }
+        }
         player.play(&tap_pcm);
         thread::sleep(std::time::Duration::from_millis(400));
         if let Some(p) = &scroll_pcm {
@@ -302,6 +311,11 @@ fn main() {
     }
     drop(tx);
     install_signal_handlers();
+    // Auto volume: keep heptix quiet when the system volume is high.
+    let volume_watcher = settings.is_auto_volume().then(|| {
+        let (player, reference) = (player.clone(), settings.auto_reference);
+        sysvol::watch(move |amp| player.set_master(sysvol::compensation(amp, reference)))
+    });
     let mut keyboard = keyboard;
     let mut store = stats_on.then(|| stats::Store::open(stats::default_path()));
     let per_key = settings.stats_keys;
@@ -309,6 +323,9 @@ fn main() {
     loop {
         match rx.recv_timeout(std::time::Duration::from_millis(500)) {
             Ok(msg) => {
+                if let Some(w) = &volume_watcher {
+                    w.touch();
+                }
                 match msg {
                     Msg::Pad(ev) => {
                         match ev {

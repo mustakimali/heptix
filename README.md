@@ -101,6 +101,13 @@ and `stats = false` and heptix stops reading keyboards altogether.
   (from [bucklespring](https://github.com/zevv/bucklespring), GPL-2.0).
   To use your own recordings, set `keyboard_sound` to a directory of
   `<hex keycode>-0.wav` (press) and `-1.wav` (release) files.
+- Volume: `volume_mode` is `auto` (default) or `custom`. Auto plays heptix
+  quieter as your system volume rises, so it is never too loud at full system
+  volume; at or below `auto_reference` (default 50% on the volume slider) sounds
+  play at their normal level. The per-sound volumes (`volume`, `scroll_volume`,
+  `keyboard_volume`) are locked in auto mode and used as set in `custom` mode.
+  The system volume is read with `wpctl` (PipeWire) or `pactl`, only while
+  sounds are playing; without either tool auto mode changes nothing.
 - Sounds: `thud` (default tap), `haptic`, `tock`, `tick`, `crown` (default
   scroll), `wheel_of_time` (a recorded picker-wheel tick, good for scrolling), or your own 16-bit WAV / linear-PCM CAF file path.
 

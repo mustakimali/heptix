@@ -22,26 +22,53 @@ use crate::keyboard::{self, Keyboard};
 use crate::player::Player;
 use crate::sound::{self, SOUNDS};
 use crate::stats::{self, Metric, Stats};
+use crate::sysvol;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-const ROWS: [&str; 11] = [
+const ROWS: [&str; 13] = [
     "Tap sound",
     "Scroll sound",
+    "Keyboard sound",
+    "Volume mode",
     "Tap volume",
     "Scroll volume",
+    "Keyboard volume",
+    "Auto reference",
     "Max tap length",
     "Scroll density",
-    "Keyboard sound",
-    "Keyboard volume",
     "Activity stats",
     "Per-key counts",
     "Distance unit",
 ];
+
+const R_TAP_SOUND: usize = 0;
+const R_SCROLL_SOUND: usize = 1;
+const R_KEYBOARD_SOUND: usize = 2;
+const R_VOLUME_MODE: usize = 3;
+const R_TAP_VOLUME: usize = 4;
+const R_SCROLL_VOLUME: usize = 5;
+const R_KEYBOARD_VOLUME: usize = 6;
+const R_AUTO_REFERENCE: usize = 7;
+const R_MAX_MS: usize = 8;
+const R_DENSITY: usize = 9;
+const R_STATS: usize = 10;
+const R_STATS_KEYS: usize = 11;
+const R_UNIT: usize = 12;
+
+/// Rows that do nothing in the current volume mode.
+fn locked(s: &Settings, row: usize) -> bool {
+    match row {
+        R_TAP_VOLUME | R_SCROLL_VOLUME | R_KEYBOARD_VOLUME => s.is_auto_volume(),
+        R_AUTO_REFERENCE => !s.is_auto_volume(),
+        _ => false,
+    }
+}
 
 struct RawMode(libc::termios);
 
@@ -109,14 +136,14 @@ fn read_key() -> Option<Key> {
 }
 
 fn options(row: usize, current: &str) -> Vec<String> {
-    let mut v: Vec<String> = if row == 6 {
+    let mut v: Vec<String> = if row == R_KEYBOARD_SOUND {
         let mut v = vec!["off".to_string()];
         v.extend(keyboard::SOUNDS.iter().map(|s| s.to_string()));
         v
     } else {
         SOUNDS.iter().map(|s| s.to_string()).collect()
     };
-    if row == 1 {
+    if row == R_SCROLL_SOUND {
         v.push("off".into());
     }
     if !v.iter().any(|o| o == current) {
@@ -130,12 +157,17 @@ fn step<T: Copy + PartialOrd>(v: T, delta: i64, lo: T, hi: T, as_i: fn(T) -> i64
     from_i(n)
 }
 
-fn adjust(s: &mut Settings, row: usize, dir: i64) {
+/// Changes the selected row; returns false if the row is locked or already at its limit.
+fn adjust(s: &mut Settings, row: usize, dir: i64) -> bool {
+    if locked(s, row) {
+        return false;
+    }
+    let before = s.clone();
     match row {
-        0 | 1 | 6 => {
+        R_TAP_SOUND | R_SCROLL_SOUND | R_KEYBOARD_SOUND => {
             let cur = match row {
-                0 => &mut s.sound,
-                1 => &mut s.scroll_sound,
+                R_TAP_SOUND => &mut s.sound,
+                R_SCROLL_SOUND => &mut s.scroll_sound,
                 _ => &mut s.keyboard_sound,
             };
             let opts = options(row, cur);
@@ -143,15 +175,19 @@ fn adjust(s: &mut Settings, row: usize, dir: i64) {
             let n = (i + dir).rem_euclid(opts.len() as i64) as usize;
             *cur = opts[n].clone();
         }
-        2 => s.volume = step(s.volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
-        3 => s.scroll_volume = step(s.scroll_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
-        4 => s.max_ms = step(s.max_ms, dir * 25, 50, 1000, |v| v as i64, |i| i as u64),
-        7 => s.keyboard_volume = step(s.keyboard_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
-        8 => s.stats = !s.stats,
-        9 => s.stats_keys = !s.stats_keys,
-        10 => s.distance_unit = if s.distance_unit == "km" { "mi".into() } else { "km".into() },
-        _ => s.scroll_ticks = step(s.scroll_ticks, dir * 2, 2, 200, |v| v as i64, |i| i as i32),
+        R_VOLUME_MODE => s.volume_mode = if s.is_auto_volume() { "custom".into() } else { "auto".into() },
+        R_TAP_VOLUME => s.volume = step(s.volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
+        R_SCROLL_VOLUME => s.scroll_volume = step(s.scroll_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
+        R_KEYBOARD_VOLUME => s.keyboard_volume = step(s.keyboard_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
+        R_AUTO_REFERENCE => s.auto_reference = step(s.auto_reference, dir * 5, 10, 100, |v| v as i64, |i| i as u32),
+        R_MAX_MS => s.max_ms = step(s.max_ms, dir * 25, 50, 1000, |v| v as i64, |i| i as u64),
+        R_DENSITY => s.scroll_ticks = step(s.scroll_ticks, dir * 2, 2, 200, |v| v as i64, |i| i as i32),
+        R_STATS => s.stats = !s.stats,
+        R_STATS_KEYS => s.stats_keys = !s.stats_keys,
+        R_UNIT => s.distance_unit = if s.distance_unit == "km" { "mi".into() } else { "km".into() },
+        _ => {}
     }
+    *s != before
 }
 
 fn on_off(v: bool) -> String {
@@ -160,27 +196,55 @@ fn on_off(v: bool) -> String {
 
 fn value_text(s: &Settings, row: usize) -> String {
     match row {
-        0 => s.sound.clone(),
-        1 => s.scroll_sound.clone(),
-        2 => format!("{}%", s.volume),
-        3 => format!("{}%", s.scroll_volume),
-        4 => format!("{} ms", s.max_ms),
-        6 => s.keyboard_sound.clone(),
-        7 => format!("{}%", s.keyboard_volume),
-        8 => on_off(s.stats),
-        9 => on_off(s.stats_keys),
-        10 => if s.distance_unit == "mi" { "miles" } else { "kilometres" }.to_string(),
-        _ => format!("{} per pad height", s.scroll_ticks),
+        R_TAP_SOUND => s.sound.clone(),
+        R_SCROLL_SOUND => s.scroll_sound.clone(),
+        R_KEYBOARD_SOUND => s.keyboard_sound.clone(),
+        R_VOLUME_MODE => if s.is_auto_volume() { "auto (follows system volume)" } else { "custom" }.to_string(),
+        R_TAP_VOLUME if s.is_auto_volume() => "auto".into(),
+        R_SCROLL_VOLUME if s.is_auto_volume() => "auto".into(),
+        R_KEYBOARD_VOLUME if s.is_auto_volume() => "auto".into(),
+        R_TAP_VOLUME => format!("{}%", s.volume),
+        R_SCROLL_VOLUME => format!("{}%", s.scroll_volume),
+        R_KEYBOARD_VOLUME => format!("{}%", s.keyboard_volume),
+        R_AUTO_REFERENCE if s.is_auto_volume() => format!("{}% system volume", s.auto_reference),
+        R_AUTO_REFERENCE => "n/a".into(),
+        R_MAX_MS => format!("{} ms", s.max_ms),
+        R_DENSITY => format!("{} per pad height", s.scroll_ticks),
+        R_STATS => on_off(s.stats),
+        R_STATS_KEYS => on_off(s.stats_keys),
+        _ => if s.distance_unit == "mi" { "miles" } else { "kilometres" }.to_string(),
     }
 }
 
 struct Preview {
     player: Player,
+    /// Latest system output amplitude (f32 bits), kept fresh by the watcher.
+    amp: Arc<AtomicU32>,
+    watcher: sysvol::Watcher,
 }
 
 impl Preview {
+    fn new() -> Preview {
+        let amp = Arc::new(AtomicU32::new(0));
+        let sink = Arc::clone(&amp);
+        let watcher = sysvol::watch(move |a| sink.store(a.to_bits(), Ordering::Relaxed));
+        Preview { player: Player::start(), amp, watcher }
+    }
+
+    /// Plays previews at the level the service would use in the current mode.
+    fn level(&self, s: &Settings) {
+        self.watcher.touch();
+        let gain = if s.is_auto_volume() {
+            sysvol::compensation(f32::from_bits(self.amp.load(Ordering::Relaxed)), s.auto_reference)
+        } else {
+            1.0
+        };
+        self.player.set_master(gain);
+    }
+
     fn tap(&self, s: &Settings) {
-        if let Ok(p) = sound::load(&s.sound, s.volume) {
+        self.level(s);
+        if let Ok(p) = sound::load(&s.sound, s.effective_volumes().0) {
             self.player.play(&Arc::new(p));
         }
     }
@@ -190,7 +254,8 @@ impl Preview {
         if s.scroll_sound == "off" {
             return;
         }
-        if let Ok(p) = sound::load(&s.scroll_sound, s.scroll_volume) {
+        self.level(s);
+        if let Ok(p) = sound::load(&s.scroll_sound, s.effective_volumes().1) {
             let (player, pcm) = (self.player.clone(), Arc::new(p));
             let gap = Duration::from_millis((1500 / s.scroll_ticks.max(1) as u64).max(20));
             thread::spawn(move || {
@@ -204,7 +269,8 @@ impl Preview {
 
     /// A short burst of typing.
     fn typing(&self, s: &Settings) {
-        if let Ok(mut k) = Keyboard::new(&s.keyboard_sound, s.keyboard_volume) {
+        self.level(s);
+        if let Ok(mut k) = Keyboard::new(&s.keyboard_sound, s.effective_volumes().2) {
             let player = self.player.clone();
             thread::spawn(move || k.demo(&player));
         }
@@ -212,9 +278,9 @@ impl Preview {
 
     fn row(&self, s: &Settings, row: usize) {
         match row {
-            1 | 3 | 5 => self.scroll(s),
-            6 | 7 => self.typing(s),
-            4 | 8 | 9 | 10 => {}
+            R_SCROLL_SOUND | R_SCROLL_VOLUME | R_DENSITY => self.scroll(s),
+            R_KEYBOARD_SOUND | R_KEYBOARD_VOLUME => self.typing(s),
+            R_MAX_MS | R_STATS | R_STATS_KEYS | R_UNIT => {}
             _ => self.tap(s),
         }
     }
@@ -296,18 +362,17 @@ fn draw_settings(s: &Settings, sel: usize, dirty: bool, path: &Path, msg: &str) 
     out += "\r\n\r\n";
     for (i, name) in ROWS.iter().enumerate() {
         let line = format!(" {name:<16} < {} >", value_text(s, i));
+        let dim = if locked(s, i) { "\x1b[2m" } else { "" };
         if i == sel {
-            out += &format!("\x1b[7m{line}\x1b[0m\r\n");
+            out += &format!("{dim}\x1b[7m{line}\x1b[0m\r\n");
         } else {
-            out += &format!("{line}\r\n");
+            out += &format!("{dim}{line}\x1b[0m\r\n");
         }
     }
-    out += " \x1b[2mKeyboard sound only reacts to a key going down or up, to pick a click.\r\n";
-    out += " Activity stats keep counters only (per hour, and per key per day): never key\r\n";
-    out += " order, timing or text. Nothing can be sent anywhere: the service runs with its\r\n";
-    out += " network access blocked.\x1b[0m\r\n";
-    out += "\r\n \x1b[2m↑/↓ select   ←/→ change (plays preview)   space preview   Tab next view\r\n";
-    out += " p preview all   s save & apply   q quit\x1b[0m\r\n\r\n";
+    out += " \x1b[2mAuto volume plays quieter as your system volume rises; custom sets the levels.\r\n";
+    out += " Activity stats keep counters only (no key order, timing or text), and the service\r\n";
+    out += " runs with its network access blocked, so nothing can be sent anywhere.\x1b[0m\r\n";
+    out += "\r\n \x1b[2m↑/↓ select  ←/→ change  space/p preview  Tab view  s save & apply  q quit\x1b[0m\r\n\r\n";
     out += &format!(" {}{}\r\n {}\r\n", path.display(), if dirty { "  [unsaved]" } else { "" }, msg);
     print!("{out}");
     let _ = io::stdout().flush();
@@ -390,7 +455,7 @@ fn apply_to_service() -> String {
 
 pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
     let _raw = RawMode::enter()?;
-    let preview = Preview { player: Player::start() };
+    let preview = Preview::new();
     let (mut sel, mut dirty) = (0usize, false);
     let mut msg = notes.join("; ");
     let mut quit_armed = false;
@@ -437,7 +502,7 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
                 Key::Char('m') => view.metric = view.metric.next(),
                 Key::Char('r') => view.range = (view.range + 1) % RANGES.len(),
                 Key::Char('u') => {
-                    adjust(&mut s, 10, 1);
+                    adjust(&mut s, R_UNIT, 1);
                     dirty = true;
                 }
                 Key::Char('e') => {
@@ -486,10 +551,17 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
             Key::Down | Key::Char('j') => sel = (sel + 1) % ROWS.len(),
             Key::Left | Key::Char('h') | Key::Right | Key::Char('l') => {
                 let dir = if matches!(key, Key::Left | Key::Char('h')) { -1 } else { 1 };
-                adjust(&mut s, sel, dir);
-                dirty = true;
-                msg.clear();
-                preview.row(&s, sel);
+                if adjust(&mut s, sel, dir) {
+                    dirty = true;
+                    msg.clear();
+                    preview.row(&s, sel);
+                } else if locked(&s, sel) {
+                    msg = if sel == R_AUTO_REFERENCE {
+                        "auto reference only applies in auto mode".into()
+                    } else {
+                        "volumes are automatic: set Volume mode to custom to change them".into()
+                    };
+                }
             }
             Key::Char(' ') | Key::Enter => preview.row(&s, sel),
             Key::Char('p') => {

@@ -5,6 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-11
+
+### Added
+- Auto volume mode (`volume_mode = "auto"`, the default): sounds get quieter as
+  the system volume rises, so heptix is never too loud at full system volume.
+  The system volume is read via `wpctl` or `pactl` while sounds play. New
+  settings `volume_mode` and `auto_reference`, and options `--volume-mode` and
+  `--auto-reference`.
+
+### Changed
+- All volume settings are grouped together in the settings editor and the
+  config file. In auto mode the per-sound volumes are locked at the built-in
+  mix; set `volume_mode = "custom"` to use `volume`, `scroll_volume` and
+  `keyboard_volume` as before. Existing configs switch to auto mode.
+
 ## [0.4.0] - 2026-10-11
 
 ### Added

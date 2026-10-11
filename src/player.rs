@@ -17,6 +17,7 @@
 use crate::sound::RATE;
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -70,7 +71,7 @@ impl Voice {
 }
 
 /// Mixes the next `CHUNK` samples of every voice and drops the finished ones.
-fn mix(voices: &mut Vec<Voice>) -> Vec<u8> {
+fn mix(voices: &mut Vec<Voice>, master: f32) -> Vec<u8> {
     let mut out = Vec::with_capacity(CHUNK * 2);
     for _ in 0..CHUNK {
         let mut acc = 0.0f32;
@@ -84,7 +85,7 @@ fn mix(voices: &mut Vec<Voice>) -> Vec<u8> {
             acc += (a + (b - a) * v.pos.fract()) * v.gain;
             v.pos += v.step;
         }
-        out.extend(((acc.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+        out.extend((((acc * master).clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
     }
     voices.retain(|v| (v.pos as usize) < v.len());
     out
@@ -117,7 +118,11 @@ fn write_sink(sink: &mut Option<Child>, data: &[u8], warned: &mut bool) {
 }
 
 #[derive(Clone)]
-pub struct Player(Sender<Voice>);
+pub struct Player {
+    tx: Sender<Voice>,
+    /// Master gain (f32 bits) applied to everything mixed; see `set_master`.
+    master: Arc<AtomicU32>,
+}
 
 impl Player {
     /// Keeps one audio stream open so each sound has low latency instead of
@@ -125,6 +130,8 @@ impl Player {
     /// fast typing does not queue up behind earlier clicks.
     pub fn start() -> Self {
         let (tx, rx) = mpsc::channel::<Voice>();
+        let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let thread_master = Arc::clone(&master);
         thread::spawn(move || {
             // Open the stream now and prime it with silence, so the first sound
             // is not clipped by stream start-up.
@@ -145,7 +152,7 @@ impl Player {
                 while let Ok(v) = rx.try_recv() {
                     voices.push(v);
                 }
-                write_sink(&mut sink, &mix(&mut voices), &mut warned);
+                write_sink(&mut sink, &mix(&mut voices, f32::from_bits(thread_master.load(Ordering::Relaxed))), &mut warned);
                 deadline = deadline.max(Instant::now()) + Duration::from_millis(5);
                 let ahead = deadline.saturating_duration_since(Instant::now());
                 if ahead > LOOKAHEAD {
@@ -153,7 +160,12 @@ impl Player {
                 }
             }
         });
-        Player(tx)
+        Player { tx, master }
+    }
+
+    /// Scales everything played from now on (1.0 = unchanged).
+    pub fn set_master(&self, gain: f32) {
+        self.master.store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
     pub fn play(&self, pcm: &Arc<Vec<u8>>) {
@@ -162,7 +174,7 @@ impl Player {
 
     /// `gain` scales the level; `rate` > 1 plays faster (higher pitch).
     pub fn play_with(&self, pcm: &Arc<Vec<u8>>, gain: f32, rate: f32) {
-        let _ = self.0.send(Voice { pcm: Arc::clone(pcm), pos: 0.0, step: rate, gain });
+        let _ = self.tx.send(Voice { pcm: Arc::clone(pcm), pos: 0.0, step: rate, gain });
     }
 }
 
@@ -183,15 +195,22 @@ mod tests {
     fn overlapping_voices_sum() {
         let mut one = vec![voice(&[8000; 10], 1.0)];
         let mut two = vec![voice(&[8000; 10], 1.0), voice(&[8000; 10], 0.5)];
-        let a = first_sample(&mix(&mut one));
-        let b = first_sample(&mix(&mut two));
+        let a = first_sample(&mix(&mut one, 1.0));
+        let b = first_sample(&mix(&mut two, 1.0));
         assert!(b > a + a / 3, "{a} {b}");
+    }
+
+    #[test]
+    fn master_gain_scales_the_mix() {
+        let full = first_sample(&mix(&mut vec![voice(&[8000; 10], 1.0)], 1.0));
+        let half = first_sample(&mix(&mut vec![voice(&[8000; 10], 1.0)], 0.5));
+        assert!((full as f32 * 0.5 - half as f32).abs() <= 1.0, "{full} {half}");
     }
 
     #[test]
     fn finished_voices_are_dropped_and_output_is_silent_after() {
         let mut v = vec![voice(&[1000; 10], 1.0)];
-        let out = mix(&mut v);
+        let out = mix(&mut v, 1.0);
         assert!(v.is_empty());
         assert_eq!(out.len(), CHUNK * 2);
         assert_eq!(i16::from_le_bytes([out[40], out[41]]), 0);

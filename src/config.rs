@@ -18,21 +18,32 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Per-sound levels used in `auto` volume mode: the mix between sounds, before
+/// the system-volume compensation.
+pub const AUTO_TAP_VOLUME: u32 = 45;
+pub const AUTO_SCROLL_VOLUME: u32 = 35;
+pub const AUTO_KEYBOARD_VOLUME: u32 = 40;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     /// Preset name or path to a 16-bit PCM WAV.
     pub sound: String,
     /// Preset name, WAV path, or "off".
     pub scroll_sound: String,
-    /// Tap volume, 0-100.
+    /// "auto" follows the system volume (heptix gets quieter as it rises);
+    /// "custom" uses the three volumes below as they are.
+    pub volume_mode: String,
+    /// System volume (slider %) at which auto mode plays sounds at full level.
+    pub auto_reference: u32,
+    /// Tap volume, 0-100 (custom mode).
     pub volume: u32,
-    /// Scroll tick volume, 0-100.
+    /// Scroll tick volume, 0-100 (custom mode).
     pub scroll_volume: u32,
     pub max_ms: u64,
     pub scroll_ticks: i32,
     /// Mechanical keyboard sound profile, or "off".
     pub keyboard_sound: String,
-    /// Keyboard volume, 0-100.
+    /// Keyboard volume, 0-100 (custom mode).
     pub keyboard_volume: u32,
     /// Count keystrokes and touchpad actions (counters only) for the Activity view.
     pub stats: bool,
@@ -47,12 +58,14 @@ impl Default for Settings {
         Settings {
             sound: "thud".into(),
             scroll_sound: "crown".into(),
-            volume: 45,
-            scroll_volume: 35,
+            volume_mode: "auto".into(),
+            auto_reference: 50,
+            volume: AUTO_TAP_VOLUME,
+            scroll_volume: AUTO_SCROLL_VOLUME,
             max_ms: 200,
             scroll_ticks: 24,
             keyboard_sound: "bucklespring".into(),
-            keyboard_volume: 40,
+            keyboard_volume: AUTO_KEYBOARD_VOLUME,
             stats: true,
             stats_keys: true,
             distance_unit: "km".into(),
@@ -79,6 +92,19 @@ fn parse_bool(v: &str) -> Option<bool> {
 }
 
 impl Settings {
+    pub fn is_auto_volume(&self) -> bool {
+        self.volume_mode == "auto"
+    }
+
+    /// (tap, scroll, keyboard) volumes to load the sounds with.
+    pub fn effective_volumes(&self) -> (u32, u32, u32) {
+        if self.is_auto_volume() {
+            (AUTO_TAP_VOLUME, AUTO_SCROLL_VOLUME, AUTO_KEYBOARD_VOLUME)
+        } else {
+            (self.volume, self.scroll_volume, self.keyboard_volume)
+        }
+    }
+
     /// Parses the TOML subset we write (`key = value`, `#` comments). Bad lines
     /// are skipped and reported in the returned warnings.
     pub fn parse(text: &str) -> (Settings, Vec<String>) {
@@ -112,6 +138,14 @@ impl Settings {
                     true
                 }
                 "keyboard_volume" => value.parse().map(|v: u32| s.keyboard_volume = v.min(100)).is_ok(),
+                "volume_mode" => match value.as_str() {
+                    "auto" | "custom" => {
+                        s.volume_mode = value;
+                        true
+                    }
+                    _ => false,
+                },
+                "auto_reference" => value.parse().map(|v: u32| s.auto_reference = v.clamp(10, 100)).is_ok(),
                 "stats" => parse_bool(&value).map(|v| s.stats = v).is_some(),
                 "stats_keys" => parse_bool(&value).map(|v| s.stats_keys = v).is_some(),
                 "distance_unit" => match value.as_str() {
@@ -145,20 +179,28 @@ impl Settings {
              sound = \"{}\"\n\
              # Two-finger scroll sound: same choices, or \"off\"\n\
              scroll_sound = \"{}\"\n\
-             # Tap volume, 0-100\n\
+             # Mechanical keyboard sound (default bucklespring; set \"off\" to disable): off, thock, clicky, linear, buckling, bucklespring (recorded Model M),\n\
+             # or a directory of <hex keycode>-0.wav / -1.wav files. Only the fact that a key went\n\
+             # down or up is used to pick a sound; the service runs with no network access.\n\
+             keyboard_sound = \"{}\"\n\
+             \n\
+             # Volume mode: auto = follow the system volume (heptix gets quieter as you turn the\n\
+             # system volume up, so it is never too loud); custom = use the three volumes below.\n\
+             volume_mode = \"{}\"\n\
+             # Custom mode: tap volume, 0-100\n\
              volume = {}\n\
-             # Scroll tick volume, 0-100\n\
+             # Custom mode: scroll tick volume, 0-100\n\
              scroll_volume = {}\n\
+             # Custom mode: keyboard volume, 0-100\n\
+             keyboard_volume = {}\n\
+             # Auto mode: system volume (%) at and below which sounds play at full level, 10-100\n\
+             auto_reference = {}\n\
+             \n\
              # Longest touch (ms) still counted as a tap\n\
              max_ms = {}\n\
              # Scroll ticks per pad height (higher = denser)\n\
              scroll_ticks = {}\n\
-             # Mechanical keyboard sound (default bucklespring; set \"off\" to disable): off, thock, clicky, linear, buckling, bucklespring (recorded Model M),\n\
-             # or a directory of <hex keycode>-0.wav / -1.wav files. Only the fact that a key went\n\
-             # down or up is used to pick a sound; keystrokes are never logged, stored or sent anywhere.\n\
-             keyboard_sound = \"{}\"\n\
-             # Keyboard volume, 0-100\n\
-             keyboard_volume = {}\n\
+             \n\
              # Activity stats: count keys and touchpad actions (counters only: per hour, and per key\n\
              # per day) for the Activity view in `heptix`. Stored in ~/.local/state/heptix/stats.tsv,\n\
              # never sent anywhere (the service runs with no network access). Set false to stop.\n\
@@ -169,12 +211,14 @@ impl Settings {
              distance_unit = \"{}\"\n",
             self.sound,
             self.scroll_sound,
+            self.keyboard_sound,
+            self.volume_mode,
             self.volume,
             self.scroll_volume,
+            self.keyboard_volume,
+            self.auto_reference,
             self.max_ms,
             self.scroll_ticks,
-            self.keyboard_sound,
-            self.keyboard_volume,
             self.stats,
             self.stats_keys,
             self.distance_unit
@@ -211,7 +255,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let s = Settings { sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40, keyboard_sound: "clicky".into(), keyboard_volume: 70, stats: false, stats_keys: false, distance_unit: "mi".into() };
+        let s = Settings { sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40, keyboard_sound: "clicky".into(), keyboard_volume: 70, stats: false, stats_keys: false, distance_unit: "mi".into(), volume_mode: "custom".into(), auto_reference: 70 };
         let (back, warn) = Settings::parse(&s.to_toml());
         assert_eq!(back, s);
         assert!(warn.is_empty());
@@ -222,6 +266,22 @@ mod tests {
         let (s, warn) = Settings::parse("volume = loud\nnope = 1\nvolume = 500\n");
         assert_eq!(s.volume, 100);
         assert_eq!(warn.len(), 2);
+    }
+
+    #[test]
+    fn volume_mode_defaults_to_auto_and_locks_the_per_sound_volumes() {
+        let mut s = Settings::default();
+        assert!(s.is_auto_volume());
+        s.volume = 10;
+        s.scroll_volume = 20;
+        s.keyboard_volume = 30;
+        assert_eq!(s.effective_volumes(), (AUTO_TAP_VOLUME, AUTO_SCROLL_VOLUME, AUTO_KEYBOARD_VOLUME));
+        s.volume_mode = "custom".into();
+        assert_eq!(s.effective_volumes(), (10, 20, 30));
+        let (p, warn) = Settings::parse("volume_mode = \"loud\"\nauto_reference = 5\n");
+        assert_eq!(warn.len(), 1);
+        assert!(p.is_auto_volume());
+        assert_eq!(p.auto_reference, 10);
     }
 
     #[test]
