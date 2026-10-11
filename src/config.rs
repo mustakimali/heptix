@@ -34,6 +34,12 @@ pub struct Settings {
     pub keyboard_sound: String,
     /// Keyboard volume, 0-100.
     pub keyboard_volume: u32,
+    /// Count keystrokes and touchpad actions (counters only) for the Activity view.
+    pub stats: bool,
+    /// Also count presses per key (needs `stats`).
+    pub stats_keys: bool,
+    /// Distance unit for scroll distance: "km" or "mi".
+    pub distance_unit: String,
 }
 
 impl Default for Settings {
@@ -47,6 +53,9 @@ impl Default for Settings {
             scroll_ticks: 24,
             keyboard_sound: "bucklespring".into(),
             keyboard_volume: 40,
+            stats: true,
+            stats_keys: true,
+            distance_unit: "km".into(),
         }
     }
 }
@@ -59,6 +68,14 @@ pub fn default_path() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("heptix").join("config.toml")
+}
+
+fn parse_bool(v: &str) -> Option<bool> {
+    match v.to_ascii_lowercase().as_str() {
+        "true" | "on" | "yes" | "1" => Some(true),
+        "false" | "off" | "no" | "0" => Some(false),
+        _ => None,
+    }
 }
 
 impl Settings {
@@ -95,6 +112,15 @@ impl Settings {
                     true
                 }
                 "keyboard_volume" => value.parse().map(|v: u32| s.keyboard_volume = v.min(100)).is_ok(),
+                "stats" => parse_bool(&value).map(|v| s.stats = v).is_some(),
+                "stats_keys" => parse_bool(&value).map(|v| s.stats_keys = v).is_some(),
+                "distance_unit" => match value.as_str() {
+                    "km" | "mi" => {
+                        s.distance_unit = value;
+                        true
+                    }
+                    _ => false,
+                },
                 "scroll_volume" => value.parse().map(|v: u32| s.scroll_volume = v.min(100)).is_ok(),
                 "volume" => value.parse().map(|v: u32| s.volume = v.min(100)).is_ok(),
                 "max_ms" => value.parse().map(|v: u64| s.max_ms = v.clamp(50, 1000)).is_ok(),
@@ -132,7 +158,15 @@ impl Settings {
              # down or up is used to pick a sound; keystrokes are never logged, stored or sent anywhere.\n\
              keyboard_sound = \"{}\"\n\
              # Keyboard volume, 0-100\n\
-             keyboard_volume = {}\n",
+             keyboard_volume = {}\n\
+             # Activity stats: count keys and touchpad actions (counters only: per hour, and per key\n\
+             # per day) for the Activity view in `heptix`. Stored in ~/.local/state/heptix/stats.tsv,\n\
+             # never sent anywhere (the service runs with no network access). Set false to stop.\n\
+             stats = {}\n\
+             # Also count presses per key (needs stats)\n\
+             stats_keys = {}\n\
+             # Scroll distance unit: km or mi\n\
+             distance_unit = \"{}\"\n",
             self.sound,
             self.scroll_sound,
             self.volume,
@@ -140,7 +174,10 @@ impl Settings {
             self.max_ms,
             self.scroll_ticks,
             self.keyboard_sound,
-            self.keyboard_volume
+            self.keyboard_volume,
+            self.stats,
+            self.stats_keys,
+            self.distance_unit
         )
     }
 
@@ -174,7 +211,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let s = Settings { sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40, keyboard_sound: "clicky".into(), keyboard_volume: 70 };
+        let s = Settings { sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40, keyboard_sound: "clicky".into(), keyboard_volume: 70, stats: false, stats_keys: false, distance_unit: "mi".into() };
         let (back, warn) = Settings::parse(&s.to_toml());
         assert_eq!(back, s);
         assert!(warn.is_empty());
@@ -184,6 +221,20 @@ mod tests {
     fn bad_input_warns_and_keeps_defaults() {
         let (s, warn) = Settings::parse("volume = loud\nnope = 1\nvolume = 500\n");
         assert_eq!(s.volume, 100);
+        assert_eq!(warn.len(), 2);
+    }
+
+    #[test]
+    fn stats_are_on_by_default_and_can_be_switched_off() {
+        let d = Settings::default();
+        assert!(d.stats && d.stats_keys);
+        assert_eq!(d.distance_unit, "km");
+        let (s, warn) = Settings::parse("stats = off\nstats_keys = false\ndistance_unit = \"mi\"\n");
+        assert!(!s.stats && !s.stats_keys && warn.is_empty());
+        assert_eq!(s.distance_unit, "mi");
+        let (s, warn) = Settings::parse("stats = maybe\ndistance_unit = \"furlongs\"\n");
+        assert!(s.stats);
+        assert_eq!(s.distance_unit, "km");
         assert_eq!(warn.len(), 2);
     }
 

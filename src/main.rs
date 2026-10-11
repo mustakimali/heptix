@@ -15,9 +15,11 @@
 // along with this program; if not, see <https://www.gnu.org/licenses/>.
 
 mod config;
+mod heatmap;
 mod keyboard;
 mod player;
 mod sound;
+mod stats;
 mod tap;
 mod tui;
 
@@ -25,6 +27,7 @@ use config::Settings;
 use evdev::Device;
 use std::path::PathBuf;
 use std::process::exit;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
@@ -53,10 +56,26 @@ OPTIONS:
   --volume <0-100>    Tap volume
   --scroll-volume <0-100>  Scroll tick volume
   --max-ms <MS>       Longest touch still counted as a tap
+  --stats             Print your activity stats (keys, taps, scrolling) and exit
+  --stats-reset       Delete all stored activity stats and exit
   --preview           Play the tap and scroll sounds once and exit
   --verbose           Print every detected tap/scroll (key presses are never printed)
   -h, --help          Show this help
 ";
+
+static STOP: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(_: libc::c_int) {
+    STOP.store(true, Ordering::Relaxed);
+}
+
+/// Lets the main loop flush stats on `systemctl stop/restart` and Ctrl-C.
+fn install_signal_handlers() {
+    unsafe {
+        libc::signal(libc::SIGTERM, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+    }
+}
 
 enum Msg {
     Pad(tap::Event),
@@ -67,6 +86,8 @@ struct Cli {
     tui: bool,
     list: bool,
     preview: bool,
+    stats: bool,
+    stats_reset: bool,
     verbose: bool,
     device: Option<PathBuf>,
     config: PathBuf,
@@ -78,6 +99,8 @@ fn parse_args() -> Cli {
         tui: false,
         list: false,
         preview: false,
+        stats: false,
+        stats_reset: false,
         verbose: false,
         device: None,
         config: config::default_path(),
@@ -99,6 +122,8 @@ fn parse_args() -> Cli {
             "--tui" => c.tui = true,
             "--list" => c.list = true,
             "--preview" => c.preview = true,
+            "--stats" => c.stats = true,
+            "--stats-reset" => c.stats_reset = true,
             "--verbose" => c.verbose = true,
             "--config" => c.config = value("--config").into(),
             "--device" => c.device = Some(value("--device").into()),
@@ -172,6 +197,27 @@ fn main() {
     }
     apply_overrides(&mut settings, &cli.overrides);
 
+    if cli.stats_reset {
+        match stats::wipe(&stats::default_path()) {
+            Ok(true) => println!("activity stats deleted"),
+            Ok(false) => println!("no activity stats stored"),
+            Err(e) => {
+                eprintln!("cannot delete stats: {e}");
+                exit(1);
+            }
+        }
+        return;
+    }
+    if cli.stats {
+        let stats = stats::load(&stats::default_path()).unwrap_or_else(|e| {
+            eprintln!("cannot read stats: {e}");
+            exit(1)
+        });
+        let color = unsafe { libc::isatty(1) == 1 } && std::env::var_os("NO_COLOR").is_none();
+        println!("{}", heatmap::summary(&stats, stats::Local::now().day, &settings.distance_unit, color, settings.stats).join("\n"));
+        return;
+    }
+
     let pads = find_touchpads(cli.device.clone());
     if cli.list {
         for (path, d) in &pads {
@@ -209,18 +255,21 @@ fn main() {
         return;
     }
 
+    let stats_on = settings.stats;
+    // Counting keystrokes needs the keyboards even when their sound is off.
+    let keyboard_wanted = keyboard_on || stats_on;
     let keyboards: Vec<(PathBuf, Device)> =
-        if keyboard_on { evdev::enumerate().filter(|(_, d)| keyboard::is_keyboard(d)).collect() } else { Vec::new() };
+        if keyboard_wanted { evdev::enumerate().filter(|(_, d)| keyboard::is_keyboard(d)).collect() } else { Vec::new() };
     if pads.is_empty() && keyboards.is_empty() {
         eprintln!(
             "no touchpad{} found (or no permission). Readable devices need membership in the \
              'input' group; see README.",
-            if keyboard_on { " or keyboard" } else { "" }
+            if keyboard_wanted { " or keyboard" } else { "" }
         );
         exit(1);
     }
-    if keyboard_on && keyboards.is_empty() {
-        eprintln!("keyboard sound is on but no keyboard was found (or no permission)");
+    if keyboard_wanted && keyboards.is_empty() {
+        eprintln!("keyboard sound or stats are on but no keyboard was found (or no permission)");
     }
 
     let (tx, rx) = mpsc::channel::<Msg>();
@@ -228,7 +277,7 @@ fn main() {
         eprintln!("watching {} ({})", path.display(), dev.name().unwrap_or("?"));
         let tx = tx.clone();
         let (max_ms, verbose) = (settings.max_ms, cli.verbose);
-        let ticks = if scroll_on { settings.scroll_ticks } else { 0 };
+        let ticks = if scroll_on || stats_on { settings.scroll_ticks } else { 0 };
         thread::spawn(move || {
             if let Err(e) = tap::watch(dev, max_ms, ticks, |event| {
                 if verbose {
@@ -252,21 +301,57 @@ fn main() {
         });
     }
     drop(tx);
+    install_signal_handlers();
     let mut keyboard = keyboard;
-    // Ends when every watcher thread has died (e.g. device unplugged).
-    for msg in rx {
-        match msg {
-            Msg::Pad(tap::Event::Tap) => player.play(&tap_pcm),
-            Msg::Pad(tap::Event::Scroll) => {
-                if let Some(p) = &scroll_pcm {
-                    player.play(p);
+    let mut store = stats_on.then(|| stats::Store::open(stats::default_path()));
+    let per_key = settings.stats_keys;
+    // Ends when every watcher thread has died (e.g. device unplugged), or on SIGTERM/SIGINT.
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            Ok(msg) => {
+                match msg {
+                    Msg::Pad(ev) => {
+                        match ev {
+                            tap::Event::Tap | tap::Event::Click => player.play(&tap_pcm),
+                            tap::Event::Scroll => {
+                                if let Some(p) = &scroll_pcm {
+                                    player.play(p);
+                                }
+                            }
+                            tap::Event::Distance(_) => {}
+                        }
+                        if let Some(s) = store.as_mut() {
+                            match ev {
+                                tap::Event::Tap => s.record(stats::Kind::Tap, per_key),
+                                tap::Event::Click => s.record(stats::Kind::Click, per_key),
+                                tap::Event::Scroll => s.record(stats::Kind::Scroll, per_key),
+                                tap::Event::Distance(um) => s.record_distance_um(um),
+                            }
+                        }
+                    }
+                    Msg::Key(ev) => {
+                        if let Some(k) = keyboard.as_mut() {
+                            k.handle(ev, &player);
+                        }
+                        if ev.down {
+                            if let Some(s) = store.as_mut() {
+                                s.record(stats::Kind::Key(ev.code), per_key);
+                            }
+                        }
+                    }
                 }
             }
-            Msg::Key(ev) => {
-                if let Some(k) = keyboard.as_mut() {
-                    k.handle(ev, &player);
-                }
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+        if let Some(s) = store.as_mut() {
+            s.flush(false);
+        }
+        if STOP.load(Ordering::Relaxed) {
+            break;
+        }
+    }
+    if let Some(s) = store.as_mut() {
+        s.flush(true);
     }
 }

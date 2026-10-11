@@ -34,10 +34,20 @@ const MOVE_FRACTION: i32 = 40; // 1/40 = 2.5%
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
+    /// A light tap on the pad.
     Tap,
+    /// A physical button press.
+    Click,
     /// One scroll "detent" of a two-finger scroll.
     Scroll,
+    /// Finger travel during a two-finger scroll, in micrometres.
+    Distance(u32),
 }
+
+/// Distance is reported in batches of at least this many micrometres.
+const DISTANCE_BATCH_UM: f32 = 2000.0;
+/// A single jump larger than this (micrometres) is a sensor glitch, not travel.
+const MAX_STEP_UM: f32 = 30_000.0;
 
 /// Shortest gap between scroll ticks, so a fast fling does not become a buzz.
 const MIN_SCROLL_GAP: Duration = Duration::from_millis(18);
@@ -61,7 +71,18 @@ pub fn watch(
 ) -> io::Result<()> {
     let limit = Duration::from_millis(max_ms);
     let (mut x_slop, mut y_slop, mut scroll_step) = (100, 100, 100);
+    // Micrometres per device unit on each axis; 1000 / (units per mm). A pad
+    // that reports no resolution is assumed to be about 100 x 60 mm.
+    let mut um_per_unit = [10.0f32, 10.0];
     if let Ok(state) = dev.get_abs_state() {
+        for (n, (axis, size_mm)) in [(AbsoluteAxisCode::ABS_X, 100.0f32), (AbsoluteAxisCode::ABS_Y, 60.0)].into_iter().enumerate() {
+            let i = state[axis.0 as usize];
+            um_per_unit[n] = if i.resolution > 0 {
+                1000.0 / i.resolution as f32
+            } else {
+                size_mm * 1000.0 / (i.maximum - i.minimum).max(1) as f32
+            };
+        }
         let range = |axis: AbsoluteAxisCode| {
             let i = state[axis.0 as usize];
             (i.maximum - i.minimum).max(1) / MOVE_FRACTION
@@ -79,6 +100,7 @@ pub fn watch(
     let mut last: [Option<i32>; 2] = [None; 2];
     let mut travel = [0i32; 2];
     let mut last_tick = Instant::now() - MIN_SCROLL_GAP;
+    let mut pending_um = 0.0f32;
     loop {
         for ev in dev.fetch_events()? {
             match ev.destructure() {
@@ -124,7 +146,7 @@ pub fn watch(
                     if let Some(t) = touch.as_mut() {
                         t.clicked = true; // the release must not also count as a tap
                     }
-                    on_event(Event::Tap);
+                    on_event(Event::Click);
                 }
                 EventSummary::AbsoluteAxis(_, axis, v) => {
                     if scroll_ticks > 0 && fingers >= 2 {
@@ -136,6 +158,14 @@ pub fn watch(
                         if let Some(i) = i {
                             if let Some(prev) = last[i].replace(v) {
                                 travel[i] += v - prev;
+                                let um = (v - prev).abs() as f32 * um_per_unit[i];
+                                if um <= MAX_STEP_UM {
+                                    pending_um += um;
+                                }
+                                if pending_um >= DISTANCE_BATCH_UM {
+                                    on_event(Event::Distance(pending_um as u32));
+                                    pending_um = pending_um.fract();
+                                }
                             }
                             if travel[i].abs() >= scroll_step {
                                 travel[i] %= scroll_step;

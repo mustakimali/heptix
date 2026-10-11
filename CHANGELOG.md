@@ -5,9 +5,28 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-11
+
 ### Added
+- Activity stats, on by default: counters for keystrokes, touchpad taps,
+  clicks, scroll ticks and scroll distance (finger travel, from the touchpad's
+  reported resolution), plus per-key counts per day. Stored in
+  `~/.local/state/heptix/stats.tsv` (mode 0600), 53 weeks plus all-time totals.
+  Settings `stats`, `stats_keys` and `distance_unit` (`km` or `mi`).
+- Settings editor views **Activity** (GitHub-style calendar heatmap, scroll
+  distance today / this week / all time), **Hours** (weekday by hour of day)
+  and **Keys** (most and least used keys, keyboard heatmap); `Tab` switches,
+  `m` metric, `r` range, `u` km/mi, `e` recording on/off, `X` wipe.
+- `heptix --stats` prints a text summary; `heptix --stats-reset` deletes all
+  stored stats.
+- The service flushes stats on stop or restart (SIGTERM/SIGINT).
 - `install.sh` installs a missing audio player (`pw-cat`, `paplay` or `aplay`,
   matching the running sound server) using `apt`, `dnf`, `pacman` or `zypper`.
+
+### Changed
+- Physical touchpad button presses are now reported as clicks, separate from taps.
+- Privacy section rewritten: counters are stored when stats are on, and the
+  network lockdown of the service is spelled out.
 
 ## [0.3.0] - 2026-10-10
 
