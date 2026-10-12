@@ -3,7 +3,8 @@
 **The missing haptic feedback for Linux!**
 
 Plays a short sound when you tap or press the touchpad, and a tick as you
-scroll with two fingers. Also plays mechanical keyboard sounds as you type
+scroll with two fingers. Also clicks for mouse buttons and ticks for the mouse
+wheel. Also plays mechanical keyboard sounds as you type
 (Model M by default; set `keyboard_sound = "off"` to disable). Works on X11 and Wayland (reads input devices via evdev).
 
 ![heptix settings editor](screenshot.png)
@@ -63,8 +64,8 @@ either.)
 
 What heptix records, because activity stats are on by default:
 
-- **Counters only**: totals per hour (keystrokes, touchpad taps, clicks,
-  scroll ticks, and how far your fingers travelled while scrolling), and how
+- **Counters only**: totals per hour (keystrokes, touchpad taps, clicks
+  from the touchpad or a mouse, scroll ticks from the touchpad or a mouse wheel, and how far your fingers travelled while scrolling), and how
   often each key was pressed per day.
 - **Never**: which keys you pressed in what order, the time between keys, the
   text you typed, window titles or anything else. Counts can still show
@@ -75,8 +76,9 @@ What heptix records, because activity stats are on by default:
   the per-key counts with `stats_keys = false`, and delete everything with
   `heptix --stats-reset` or `X` in the Activity view.
 
-Keyboard sound (also on by default) only reacts to a key going down or up to
-pick a click. `--verbose` never prints key presses. Set `keyboard_sound = "off"`
+Keyboard and mouse sounds (also on by default) only react to a key or button
+going down or up, and to wheel notches, to pick a sound. Mouse movement events
+are read and discarded at once; nothing about them is kept. `--verbose` never prints key presses. Set `keyboard_sound = "off"`
 and `stats = false` and heptix stops reading keyboards altogether.
 
 ## Use
@@ -91,7 +93,10 @@ and `stats = false` and heptix stops reading keyboards altogether.
   switch). `heptix --stats` prints a text summary. See Privacy for what is stored.
 - `heptix --run` runs with the saved settings; other options override them
   (`heptix --help`).
-- Settings: `~/.config/heptix/config.toml` (created on first run).
+- Settings: `~/.config/heptix/config.toml` (created on first run). `enabled` at
+  the top is a master switch: set it to `false` (or turn off **Enabled**, the
+  first row in the editor) and heptix goes idle. It reads no input, plays
+  nothing and records nothing, and a restart after turning it back on resumes it.
 - Keyboard sounds (on by default, `bucklespring`): set `keyboard_sound` to
   `off`, `thock`, `clicky`, `linear`, `buckling` (synthesised Model M-style
   spring ping) or `bucklespring` (or use the editor). Separate down/up strokes, different sounds
@@ -108,6 +113,15 @@ and `stats = false` and heptix stops reading keyboards altogether.
   `keyboard_volume`) are locked in auto mode and used as set in `custom` mode.
   The system volume is read with `wpctl` (PipeWire) or `pactl`, only while
   sounds are playing; without either tool auto mode changes nothing.
+- Mouse: `mouse_sound` (`recorded` by default, a real recording of a click and
+  its release; or the synthesised `tactile` and `soft`, or `off`) plays a
+  different sound for button down and button up, tuned slightly per button. The wheel plays one `scroll_sound` tick per notch (rate limited, and
+  smooth-scrolling wheels still tick once per notch's worth of movement). Only
+  buttons and the wheel are used. A touchpad's own pointer device is skipped and
+  repeated events are dropped, so nothing is played or counted twice.
+- Hotplug: keyboards, mice and receivers you plug in later are picked up
+  automatically (and picked up again after being unplugged); no restart needed.
+  `heptix --list` shows what is detected.
 - Sounds: `thud` (default tap), `haptic`, `tock`, `tick`, `crown` (default
   scroll), `wheel_of_time` (a recorded picker-wheel tick, good for scrolling), or your own 16-bit WAV / linear-PCM CAF file path.
 

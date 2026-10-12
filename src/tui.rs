@@ -19,6 +19,7 @@
 use crate::config::Settings;
 use crate::heatmap;
 use crate::keyboard::{self, Keyboard};
+use crate::mouse::{self, Mouse};
 use crate::player::Player;
 use crate::sound::{self, SOUNDS};
 use crate::stats::{self, Metric, Stats};
@@ -31,14 +32,17 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-const ROWS: [&str; 13] = [
+const ROWS: [&str; 16] = [
+    "Enabled",
     "Tap sound",
     "Scroll sound",
     "Keyboard sound",
+    "Mouse sound",
     "Volume mode",
     "Tap volume",
     "Scroll volume",
     "Keyboard volume",
+    "Mouse volume",
     "Auto reference",
     "Max tap length",
     "Scroll density",
@@ -47,24 +51,27 @@ const ROWS: [&str; 13] = [
     "Distance unit",
 ];
 
-const R_TAP_SOUND: usize = 0;
-const R_SCROLL_SOUND: usize = 1;
-const R_KEYBOARD_SOUND: usize = 2;
-const R_VOLUME_MODE: usize = 3;
-const R_TAP_VOLUME: usize = 4;
-const R_SCROLL_VOLUME: usize = 5;
-const R_KEYBOARD_VOLUME: usize = 6;
-const R_AUTO_REFERENCE: usize = 7;
-const R_MAX_MS: usize = 8;
-const R_DENSITY: usize = 9;
-const R_STATS: usize = 10;
-const R_STATS_KEYS: usize = 11;
-const R_UNIT: usize = 12;
+const R_ENABLED: usize = 0;
+const R_TAP_SOUND: usize = 1;
+const R_SCROLL_SOUND: usize = 2;
+const R_KEYBOARD_SOUND: usize = 3;
+const R_MOUSE_SOUND: usize = 4;
+const R_VOLUME_MODE: usize = 5;
+const R_TAP_VOLUME: usize = 6;
+const R_SCROLL_VOLUME: usize = 7;
+const R_KEYBOARD_VOLUME: usize = 8;
+const R_MOUSE_VOLUME: usize = 9;
+const R_AUTO_REFERENCE: usize = 10;
+const R_MAX_MS: usize = 11;
+const R_DENSITY: usize = 12;
+const R_STATS: usize = 13;
+const R_STATS_KEYS: usize = 14;
+const R_UNIT: usize = 15;
 
 /// Rows that do nothing in the current volume mode.
 fn locked(s: &Settings, row: usize) -> bool {
     match row {
-        R_TAP_VOLUME | R_SCROLL_VOLUME | R_KEYBOARD_VOLUME => s.is_auto_volume(),
+        R_TAP_VOLUME | R_SCROLL_VOLUME | R_KEYBOARD_VOLUME | R_MOUSE_VOLUME => s.is_auto_volume(),
         R_AUTO_REFERENCE => !s.is_auto_volume(),
         _ => false,
     }
@@ -140,6 +147,10 @@ fn options(row: usize, current: &str) -> Vec<String> {
         let mut v = vec!["off".to_string()];
         v.extend(keyboard::SOUNDS.iter().map(|s| s.to_string()));
         v
+    } else if row == R_MOUSE_SOUND {
+        let mut v = vec!["off".to_string()];
+        v.extend(mouse::SOUNDS.iter().map(|s| s.to_string()));
+        v
     } else {
         SOUNDS.iter().map(|s| s.to_string()).collect()
     };
@@ -164,11 +175,12 @@ fn adjust(s: &mut Settings, row: usize, dir: i64) -> bool {
     }
     let before = s.clone();
     match row {
-        R_TAP_SOUND | R_SCROLL_SOUND | R_KEYBOARD_SOUND => {
+        R_TAP_SOUND | R_SCROLL_SOUND | R_KEYBOARD_SOUND | R_MOUSE_SOUND => {
             let cur = match row {
                 R_TAP_SOUND => &mut s.sound,
                 R_SCROLL_SOUND => &mut s.scroll_sound,
-                _ => &mut s.keyboard_sound,
+                R_KEYBOARD_SOUND => &mut s.keyboard_sound,
+                _ => &mut s.mouse_sound,
             };
             let opts = options(row, cur);
             let i = opts.iter().position(|o| o == cur).unwrap_or(0) as i64;
@@ -179,9 +191,11 @@ fn adjust(s: &mut Settings, row: usize, dir: i64) -> bool {
         R_TAP_VOLUME => s.volume = step(s.volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
         R_SCROLL_VOLUME => s.scroll_volume = step(s.scroll_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
         R_KEYBOARD_VOLUME => s.keyboard_volume = step(s.keyboard_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
+        R_MOUSE_VOLUME => s.mouse_volume = step(s.mouse_volume, dir * 5, 0, 100, |v| v as i64, |i| i as u32),
         R_AUTO_REFERENCE => s.auto_reference = step(s.auto_reference, dir * 5, 10, 100, |v| v as i64, |i| i as u32),
         R_MAX_MS => s.max_ms = step(s.max_ms, dir * 25, 50, 1000, |v| v as i64, |i| i as u64),
         R_DENSITY => s.scroll_ticks = step(s.scroll_ticks, dir * 2, 2, 200, |v| v as i64, |i| i as i32),
+        R_ENABLED => s.enabled = !s.enabled,
         R_STATS => s.stats = !s.stats,
         R_STATS_KEYS => s.stats_keys = !s.stats_keys,
         R_UNIT => s.distance_unit = if s.distance_unit == "km" { "mi".into() } else { "km".into() },
@@ -196,16 +210,20 @@ fn on_off(v: bool) -> String {
 
 fn value_text(s: &Settings, row: usize) -> String {
     match row {
+        R_ENABLED => if s.enabled { "on" } else { "off: nothing is played, read or recorded" }.to_string(),
         R_TAP_SOUND => s.sound.clone(),
         R_SCROLL_SOUND => s.scroll_sound.clone(),
         R_KEYBOARD_SOUND => s.keyboard_sound.clone(),
+        R_MOUSE_SOUND => s.mouse_sound.clone(),
         R_VOLUME_MODE => if s.is_auto_volume() { "auto (follows system volume)" } else { "custom" }.to_string(),
         R_TAP_VOLUME if s.is_auto_volume() => "auto".into(),
         R_SCROLL_VOLUME if s.is_auto_volume() => "auto".into(),
         R_KEYBOARD_VOLUME if s.is_auto_volume() => "auto".into(),
+        R_MOUSE_VOLUME if s.is_auto_volume() => "auto".into(),
         R_TAP_VOLUME => format!("{}%", s.volume),
         R_SCROLL_VOLUME => format!("{}%", s.scroll_volume),
         R_KEYBOARD_VOLUME => format!("{}%", s.keyboard_volume),
+        R_MOUSE_VOLUME => format!("{}%", s.mouse_volume),
         R_AUTO_REFERENCE if s.is_auto_volume() => format!("{}% system volume", s.auto_reference),
         R_AUTO_REFERENCE => "n/a".into(),
         R_MAX_MS => format!("{} ms", s.max_ms),
@@ -276,11 +294,21 @@ impl Preview {
         }
     }
 
+    /// A few clicks: left, right, middle and a double click.
+    fn clicking(&self, s: &Settings) {
+        self.level(s);
+        if let Ok(mut m) = Mouse::new(&s.mouse_sound, s.effective_volumes().3) {
+            let player = self.player.clone();
+            thread::spawn(move || m.demo(&player));
+        }
+    }
+
     fn row(&self, s: &Settings, row: usize) {
         match row {
+            R_MOUSE_SOUND | R_MOUSE_VOLUME => self.clicking(s),
             R_SCROLL_SOUND | R_SCROLL_VOLUME | R_DENSITY => self.scroll(s),
             R_KEYBOARD_SOUND | R_KEYBOARD_VOLUME => self.typing(s),
-            R_MAX_MS | R_STATS | R_STATS_KEYS | R_UNIT => {}
+            R_ENABLED | R_MAX_MS | R_STATS | R_STATS_KEYS | R_UNIT => {}
             _ => self.tap(s),
         }
     }
@@ -362,17 +390,20 @@ fn draw_settings(s: &Settings, sel: usize, dirty: bool, path: &Path, msg: &str) 
     out += "\r\n\r\n";
     for (i, name) in ROWS.iter().enumerate() {
         let line = format!(" {name:<16} < {} >", value_text(s, i));
-        let dim = if locked(s, i) { "\x1b[2m" } else { "" };
+        let dim = if locked(s, i) || (!s.enabled && i != R_ENABLED) { "\x1b[2m" } else { "" };
         if i == sel {
             out += &format!("{dim}\x1b[7m{line}\x1b[0m\r\n");
         } else {
             out += &format!("{dim}{line}\x1b[0m\r\n");
         }
     }
-    out += " \x1b[2mAuto volume plays quieter as your system volume rises; custom sets the levels.\r\n";
-    out += " Activity stats keep counters only (no key order, timing or text), and the service\r\n";
-    out += " runs with its network access blocked, so nothing can be sent anywhere.\x1b[0m\r\n";
-    out += "\r\n \x1b[2m↑/↓ select  ←/→ change  space/p preview  Tab view  s save & apply  q quit\x1b[0m\r\n\r\n";
+    if s.enabled {
+        out += " \x1b[2mAuto volume gets quieter as the system volume rises; custom sets the levels.\r\n";
+    } else {
+        out += " \x1b[33mheptix is OFF:\x1b[0m\x1b[2m nothing is played, read or recorded. s saves & applies.\r\n";
+    }
+    out += " Stats: counters only, never key order, timing or text; service has no network.\x1b[0m\r\n";
+    out += " \x1b[2m↑/↓ select  ←/→ change  space/p preview  Tab view  s save & apply  q quit\x1b[0m\r\n";
     out += &format!(" {}{}\r\n {}\r\n", path.display(), if dirty { "  [unsaved]" } else { "" }, msg);
     print!("{out}");
     let _ = io::stdout().flush();
@@ -570,6 +601,8 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
                 preview.scroll(&s);
                 thread::sleep(Duration::from_millis(350));
                 preview.typing(&s);
+                thread::sleep(Duration::from_millis(1500));
+                preview.clicking(&s);
             }
             _ => {}
         }

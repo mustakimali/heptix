@@ -49,7 +49,7 @@ pub const SOUNDS: &[&str] = &["thock", "clicky", "linear", "buckling", RECORDED]
 static BUCKLESPRING: &[u8] = include_bytes!("../assets/bucklespring.pack");
 
 /// Pre-rendered variants per class and stroke.
-const VARIANTS: usize = 4;
+pub(crate) const VARIANTS: usize = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct KeyEvent {
@@ -78,21 +78,21 @@ pub fn watch(mut dev: Device, mut on_key: impl FnMut(KeyEvent)) -> io::Result<()
 }
 
 /// One impact: filtered noise plus ringing resonances, `at` seconds in.
-struct Hit {
-    at: f32,
+pub(crate) struct Hit {
+    pub(crate) at: f32,
     /// Band low Hz, band high Hz, decay seconds, amplitude.
-    noise: (f32, f32, f32, f32),
+    pub(crate) noise: (f32, f32, f32, f32),
     /// Hz, decay seconds, amplitude.
-    tones: &'static [(f32, f32, f32)],
+    pub(crate) tones: &'static [(f32, f32, f32)],
 }
 
-struct Profile {
-    press: &'static [Hit],
-    press_ms: f32,
-    release: &'static [Hit],
-    release_ms: f32,
+pub(crate) struct Profile {
+    pub(crate) press: &'static [Hit],
+    pub(crate) press_ms: f32,
+    pub(crate) release: &'static [Hit],
+    pub(crate) release_ms: f32,
     /// Release peak relative to the press.
-    release_level: f32,
+    pub(crate) release_level: f32,
 }
 
 // Lubed linear in a padded case: deep, rounded, short high-end.
@@ -174,7 +174,7 @@ static BUCKLING: Profile = Profile {
 };
 
 #[derive(Clone, Copy)]
-enum Class {
+pub(crate) enum Class {
     Normal,
     /// Shift, enter, backspace, tab, caps and other stabilised keys.
     Wide,
@@ -230,15 +230,15 @@ fn key_pitch(code: u16) -> f32 {
     1.0 + 0.04 * (h as f32 / 127.5 - 1.0)
 }
 
-struct Rng(u32);
+pub(crate) struct Rng(u32);
 
 impl Rng {
-    fn seeded() -> Self {
+    pub(crate) fn seeded() -> Self {
         let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos());
         Rng(nanos | 1)
     }
 
-    fn next(&mut self) -> u32 {
+    pub(crate) fn next(&mut self) -> u32 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 17;
         self.0 ^= self.0 << 5;
@@ -246,12 +246,12 @@ impl Rng {
     }
 
     /// 0..1
-    fn unit(&mut self) -> f32 {
+    pub(crate) fn unit(&mut self) -> f32 {
         (self.next() >> 8) as f32 / 16_777_216.0
     }
 
     /// -1..1
-    fn signed(&mut self) -> f32 {
+    pub(crate) fn signed(&mut self) -> f32 {
         self.unit() * 2.0 - 1.0
     }
 }
@@ -277,7 +277,7 @@ fn add_hit(out: &mut [f32], hit: &Hit, freq: f32, tail: f32, rng: &mut Rng) {
 }
 
 /// Renders one stroke, normalised to `peak`.
-fn render(hits: &[Hit], ms: f32, class: Class, press: bool, peak: f32, rng: &mut Rng) -> Vec<f32> {
+pub(crate) fn render(hits: &[Hit], ms: f32, class: Class, press: bool, peak: f32, rng: &mut Rng) -> Vec<f32> {
     let n = (RATE as f32 * ms * class.tail() / 1000.0) as usize;
     let mut out = vec![0.0f32; n];
     // Every variant gets its own slight detune and noise.

@@ -23,9 +23,13 @@ use std::path::{Path, PathBuf};
 pub const AUTO_TAP_VOLUME: u32 = 55;
 pub const AUTO_SCROLL_VOLUME: u32 = 45;
 pub const AUTO_KEYBOARD_VOLUME: u32 = 40;
+pub const AUTO_MOUSE_VOLUME: u32 = 50;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
+    /// Master switch. When false heptix is idle: it reads no input, plays
+    /// nothing and records nothing.
+    pub enabled: bool,
     /// Preset name or path to a 16-bit PCM WAV.
     pub sound: String,
     /// Preset name, WAV path, or "off".
@@ -45,6 +49,10 @@ pub struct Settings {
     pub keyboard_sound: String,
     /// Keyboard volume, 0-100 (custom mode).
     pub keyboard_volume: u32,
+    /// Mouse button sound: "tactile", "soft" or "off". The wheel uses `scroll_sound`.
+    pub mouse_sound: String,
+    /// Mouse volume, 0-100 (custom mode).
+    pub mouse_volume: u32,
     /// Count keystrokes and touchpad actions (counters only) for the Activity view.
     pub stats: bool,
     /// Also count presses per key (needs `stats`).
@@ -56,6 +64,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            enabled: true,
             sound: "thud".into(),
             scroll_sound: "crown".into(),
             volume_mode: "auto".into(),
@@ -66,6 +75,8 @@ impl Default for Settings {
             scroll_ticks: 24,
             keyboard_sound: "bucklespring".into(),
             keyboard_volume: AUTO_KEYBOARD_VOLUME,
+            mouse_sound: "recorded".into(),
+            mouse_volume: AUTO_MOUSE_VOLUME,
             stats: true,
             stats_keys: true,
             distance_unit: "km".into(),
@@ -96,12 +107,12 @@ impl Settings {
         self.volume_mode == "auto"
     }
 
-    /// (tap, scroll, keyboard) volumes to load the sounds with.
-    pub fn effective_volumes(&self) -> (u32, u32, u32) {
+    /// (tap, scroll, keyboard, mouse) volumes to load the sounds with.
+    pub fn effective_volumes(&self) -> (u32, u32, u32, u32) {
         if self.is_auto_volume() {
-            (AUTO_TAP_VOLUME, AUTO_SCROLL_VOLUME, AUTO_KEYBOARD_VOLUME)
+            (AUTO_TAP_VOLUME, AUTO_SCROLL_VOLUME, AUTO_KEYBOARD_VOLUME, AUTO_MOUSE_VOLUME)
         } else {
-            (self.volume, self.scroll_volume, self.keyboard_volume)
+            (self.volume, self.scroll_volume, self.keyboard_volume, self.mouse_volume)
         }
     }
 
@@ -146,6 +157,15 @@ impl Settings {
                     _ => false,
                 },
                 "auto_reference" => value.parse().map(|v: u32| s.auto_reference = v.clamp(10, 100)).is_ok(),
+                "mouse_sound" => match value.as_str() {
+                    "off" | "recorded" | "tactile" | "soft" => {
+                        s.mouse_sound = value;
+                        true
+                    }
+                    _ => false,
+                },
+                "mouse_volume" => value.parse().map(|v: u32| s.mouse_volume = v.min(100)).is_ok(),
+                "enabled" => parse_bool(&value).map(|v| s.enabled = v).is_some(),
                 "stats" => parse_bool(&value).map(|v| s.stats = v).is_some(),
                 "stats_keys" => parse_bool(&value).map(|v| s.stats_keys = v).is_some(),
                 "distance_unit" => match value.as_str() {
@@ -175,6 +195,10 @@ impl Settings {
         format!(
             "# heptix - the missing haptic feedback for Linux! Settings. Run `heptix` with no arguments to edit them interactively.\n\
              \n\
+             # Master switch. Set to false to turn heptix off entirely: it reads no input, plays\n\
+             # nothing and records nothing (it stays running, idle, until you turn it back on).\n\
+             enabled = {}\n\
+             \n\
              # Tap and button-press sound: haptic, tock, tick, thud, crown, wheel_of_time, or a path to a 16-bit WAV\n\
              sound = \"{}\"\n\
              # Two-finger scroll sound: same choices, or \"off\"\n\
@@ -183,9 +207,13 @@ impl Settings {
              # or a directory of <hex keycode>-0.wav / -1.wav files. Only the fact that a key went\n\
              # down or up is used to pick a sound; the service runs with no network access.\n\
              keyboard_sound = \"{}\"\n\
+             # Mouse button sound (a different click for button down and up): off, recorded (real\n\
+             # recording), tactile, soft (synthesised).\n\
+             # The wheel plays one scroll_sound tick per notch. Only buttons and the wheel are used.\n\
+             mouse_sound = \"{}\"\n\
              \n\
              # Volume mode: auto = follow the system volume (heptix gets quieter as you turn the\n\
-             # system volume up, so it is never too loud); custom = use the three volumes below.\n\
+             # system volume up, so it is never too loud); custom = use the volumes below.\n\
              volume_mode = \"{}\"\n\
              # Custom mode: tap volume, 0-100\n\
              volume = {}\n\
@@ -193,6 +221,8 @@ impl Settings {
              scroll_volume = {}\n\
              # Custom mode: keyboard volume, 0-100\n\
              keyboard_volume = {}\n\
+             # Custom mode: mouse volume, 0-100\n\
+             mouse_volume = {}\n\
              # Auto mode: system volume (%) at and below which sounds play at full level, 10-100\n\
              auto_reference = {}\n\
              \n\
@@ -209,13 +239,16 @@ impl Settings {
              stats_keys = {}\n\
              # Scroll distance unit: km or mi\n\
              distance_unit = \"{}\"\n",
+            self.enabled,
             self.sound,
             self.scroll_sound,
             self.keyboard_sound,
+            self.mouse_sound,
             self.volume_mode,
             self.volume,
             self.scroll_volume,
             self.keyboard_volume,
+            self.mouse_volume,
             self.auto_reference,
             self.max_ms,
             self.scroll_ticks,
@@ -255,7 +288,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let s = Settings { sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40, keyboard_sound: "clicky".into(), keyboard_volume: 70, stats: false, stats_keys: false, distance_unit: "mi".into(), volume_mode: "custom".into(), auto_reference: 70 };
+        let s = Settings { enabled: false, sound: "/a b/c.wav".into(), scroll_sound: "off".into(), volume: 35, scroll_volume: 20, max_ms: 300, scroll_ticks: 40, keyboard_sound: "clicky".into(), keyboard_volume: 70, stats: false, stats_keys: false, distance_unit: "mi".into(), volume_mode: "custom".into(), auto_reference: 70, mouse_sound: "soft".into(), mouse_volume: 65 };
         let (back, warn) = Settings::parse(&s.to_toml());
         assert_eq!(back, s);
         assert!(warn.is_empty());
@@ -275,13 +308,34 @@ mod tests {
         s.volume = 10;
         s.scroll_volume = 20;
         s.keyboard_volume = 30;
-        assert_eq!(s.effective_volumes(), (AUTO_TAP_VOLUME, AUTO_SCROLL_VOLUME, AUTO_KEYBOARD_VOLUME));
+        assert_eq!(s.effective_volumes(), (AUTO_TAP_VOLUME, AUTO_SCROLL_VOLUME, AUTO_KEYBOARD_VOLUME, AUTO_MOUSE_VOLUME));
         s.volume_mode = "custom".into();
-        assert_eq!(s.effective_volumes(), (10, 20, 30));
+        s.mouse_volume = 40;
+        assert_eq!(s.effective_volumes(), (10, 20, 30, 40));
         let (p, warn) = Settings::parse("volume_mode = \"loud\"\nauto_reference = 5\n");
         assert_eq!(warn.len(), 1);
         assert!(p.is_auto_volume());
         assert_eq!(p.auto_reference, 10);
+    }
+
+    #[test]
+    fn enabled_defaults_to_true_and_is_written_first() {
+        assert!(Settings::default().enabled);
+        assert!(!Settings::parse("enabled = false\n").0.enabled);
+        assert!(!Settings::parse("enabled = off\n").0.enabled);
+        let text = Settings::default().to_toml();
+        let first = text.lines().find(|l| !l.starts_with('#') && !l.is_empty()).unwrap();
+        assert_eq!(first, "enabled = true");
+    }
+
+    #[test]
+    fn mouse_sound_defaults_to_recorded_and_rejects_unknown_names() {
+        assert_eq!(Settings::default().mouse_sound, "recorded");
+        assert_eq!(Settings::parse("mouse_sound = \"off\"\n").0.mouse_sound, "off");
+        let (s, warn) = Settings::parse("mouse_sound = \"squeaky\"\nmouse_volume = 300\n");
+        assert_eq!(s.mouse_sound, "recorded");
+        assert_eq!(s.mouse_volume, 100);
+        assert_eq!(warn.len(), 1);
     }
 
     #[test]

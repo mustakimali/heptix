@@ -105,6 +105,13 @@ pub fn preset(name: &str, volume: u32) -> Option<Pcm> {
 /// Loads a 16-bit PCM WAV of any channel count and sample rate.
 pub fn from_wav(path: &str, volume: u32) -> Result<Pcm, String> {
     let b = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let (mono, rate) = decode_wav(&b, path)?;
+    Ok(finish(&mono, rate, volume))
+}
+
+/// Decodes a 16-bit PCM WAV to mono samples in -1..1 and its sample rate.
+/// `path` is only used in error messages.
+pub fn decode_wav(b: &[u8], path: &str) -> Result<(Vec<f32>, u32), String> {
     let bad = |m: &str| format!("{path}: {m} (need 16-bit PCM WAV; convert with `ffmpeg -i in -c:a pcm_s16le out.wav`)");
     if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
         return Err(bad("not a WAV file"));
@@ -142,7 +149,7 @@ pub fn from_wav(path: &str, volume: u32) -> Result<Pcm, String> {
             sum / channels as f32
         })
         .collect();
-    Ok(finish(&mono, rate, volume))
+    Ok((mono, rate))
 }
 
 /// Linear resample to the sink rate, then convert to PCM.

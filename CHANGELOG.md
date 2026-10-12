@@ -5,7 +5,31 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-12
+
+### Added
+- Global disable: `enabled = false` (the first setting; **Enabled** is the first
+  row in the editor, and `--enabled false` works on the command line) puts
+  heptix in an idle state: no input devices are opened, nothing is played and
+  no stats are recorded. The service stays running, so turning it back on and
+  saving applies at once.
+- Mouse sounds: a different click for button down and up (`mouse_sound` =
+  `recorded` (default, a real CC0 recording of a click and its release),
+  `tactile`, `soft` or `off`, and `mouse_volume`), and one scroll
+  tick per wheel notch, rate limited. Options `--mouse-sound` and
+  `--mouse-volume`; Mouse sound and Mouse volume rows in the editor, grouped
+  with the other sound and volume settings.
+- Hotplug for all devices: keyboards, mice and touchpads connected after
+  start-up are picked up automatically, and again after being unplugged.
+- Mouse clicks and wheel ticks count in the activity stats as clicks and scroll
+  ticks.
+
 ### Changed
+- `heptix --list` now lists keyboards and mice too, with a role column.
+- A touchpad's own pointer node and repeated events are filtered out so
+  nothing is played or counted twice.
+- The service no longer exits when no input device can be opened at start-up;
+  it keeps waiting for devices to appear.
 - Auto volume mode plays taps, clicks and scroll ticks slightly louder (55 and
   45, were 45 and 35). The custom-mode defaults for `volume` and
   `scroll_volume` are raised to match.
