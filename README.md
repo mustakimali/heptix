@@ -2,6 +2,8 @@
 
 **The missing haptic feedback for Linux!**
 
+[![ci](https://github.com/mustakimali/heptix/actions/workflows/ci.yml/badge.svg)](https://github.com/mustakimali/heptix/actions/workflows/ci.yml)
+
 Plays a short sound when you tap or press the touchpad, and a tick as you
 scroll with two fingers. Also clicks for mouse buttons and ticks for the mouse
 wheel. Also plays mechanical keyboard sounds as you type
@@ -214,6 +216,11 @@ stops reading keyboards altogether.
 cargo build --release     # or: nix run github:mustakimali/heptix
 make install              # build and install from source; asks which mode (see Install)
 ```
+
+CI (`.github/workflows/ci.yml`) runs on every pull request and every push to
+`main`: clippy and shellcheck, the unit tests on x86_64 and arm64, the installer
+test below on Debian, Ubuntu, Fedora, Arch and Alpine, and the NixOS module in a
+NixOS VM.
 
 `tools/docker-test/run.sh <static heptix binary> [debian|ubuntu|fedora|arch|alpine]`
 tests the installer end to end in a container running real systemd (Alpine has

@@ -325,7 +325,7 @@ fn embedded_pack() -> Pack {
         let (rate, frames) = (le32(pos + 2), le32(pos + 6) as usize);
         pos += 10;
         let mono: Vec<f32> = b[pos..pos + frames * 2]
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .map(|s| i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0)
             .collect();
         pos += frames * 2;
@@ -448,7 +448,7 @@ mod tests {
     use super::*;
 
     fn peak(pcm: &[u8]) -> i16 {
-        pcm.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]).abs()).max().unwrap()
+        pcm.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]]).abs()).max().unwrap()
     }
 
     #[test]
