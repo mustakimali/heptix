@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# heptix - the missing haptic feedback for Linux!
+# Copyright (C) 2026 M Mustakim Ali
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see <https://www.gnu.org/licenses/>.
+
+# The heptix client: plays the sounds, keeps the stats, shows nothing.
+# Input events come from the reader service over /run/heptix/events.sock.
+[Unit]
+Description=heptix - the missing haptic feedback for Linux
+After=pipewire.service
+
+[Service]
+ExecStart=/usr/lib/heptix/heptix --client
+Restart=on-failure
+RestartSec=2
+# No network: only local unix sockets (the audio server and the reader) are allowed.
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+NoNewPrivileges=yes
+# User units get a minimal PATH; heptix needs pw-cat, paplay or aplay.
+Environment=PATH=/run/current-system/sw/bin:/etc/profiles/per-user/%u/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
