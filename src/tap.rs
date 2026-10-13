@@ -16,6 +16,7 @@
 
 use evdev::{AbsoluteAxisCode, Device, EventSummary, KeyCode, PropType};
 use std::io;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 /// A touchpad reports finger position plus BTN_TOOL_FINGER, and is not a touchscreen.
@@ -32,7 +33,7 @@ pub fn is_touchpad(d: &Device) -> bool {
 /// Fraction of the pad's width a finger may travel and still count as a tap.
 const MOVE_FRACTION: i32 = 40; // 1/40 = 2.5%
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
     /// A light tap on the pad.
     Tap,
@@ -67,6 +68,7 @@ pub fn watch(
     mut dev: Device,
     max_ms: u64,
     scroll_ticks: i32,
+    stop: &AtomicBool,
     mut on_event: impl FnMut(Event),
 ) -> io::Result<()> {
     let limit = Duration::from_millis(max_ms);
@@ -102,6 +104,11 @@ pub fn watch(
     let mut last_tick = Instant::now() - MIN_SCROLL_GAP;
     let mut pending_um = 0.0f32;
     loop {
+        match crate::devices::wait_for_events(&dev, stop) {
+            None => return Ok(()),
+            Some(false) => continue,
+            Some(true) => {}
+        }
         for ev in dev.fetch_events()? {
             match ev.destructure() {
                 EventSummary::Key(

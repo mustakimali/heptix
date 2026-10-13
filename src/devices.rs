@@ -26,11 +26,32 @@ use evdev::Device;
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
+use std::os::fd::{AsRawFd, RawFd};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+/// How long a watcher waits for input before it checks whether it was told to stop.
+const STOP_POLL_MS: i32 = 250;
+
+/// Waits until `fd` is readable (or hung up), or `ms` passes. False on timeout.
+pub fn wait_readable(fd: RawFd, ms: i32) -> bool {
+    let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    unsafe { libc::poll(&mut p, 1, ms) > 0 }
+}
+
+/// Waits for events on a device, so its watcher can notice `stop`. True when
+/// the device has something to read.
+pub fn wait_for_events(dev: &Device, stop: &AtomicBool) -> Option<bool> {
+    if stop.load(Ordering::Relaxed) {
+        return None;
+    }
+    Some(wait_readable(dev.as_raw_fd(), STOP_POLL_MS))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Msg {
     Pad(tap::Event),
     Key(keyboard::KeyEvent),
@@ -100,12 +121,41 @@ struct Shared {
     tx: Sender<Msg>,
     opts: Options,
     watched: Mutex<HashSet<PathBuf>>,
+    stop: Arc<AtomicBool>,
+}
+
+/// Keeps the device watchers alive. Dropping it stops them all and closes the devices.
+pub struct Handle {
+    /// How many devices were attached when it started.
+    pub attached: usize,
+    stop: Arc<AtomicBool>,
+}
+
+impl Handle {
+    /// A handle that watches nothing, with the flag that shows when it was dropped.
+    #[cfg(test)]
+    pub fn fake() -> (Handle, Arc<AtomicBool>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        (Handle { attached: 0, stop: Arc::clone(&stop) }, stop)
+    }
+
+    #[cfg(test)]
+    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.stop)
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Attaches every matching device now, and keeps watching for new ones if
-/// `opts.hotplug`. Returns how many devices were attached initially.
-pub fn start(tx: Sender<Msg>, opts: Options) -> usize {
-    let shared = Arc::new(Shared { tx, opts, watched: Mutex::new(HashSet::new()) });
+/// `opts.hotplug`, until the returned handle is dropped.
+pub fn start(tx: Sender<Msg>, opts: Options) -> Handle {
+    let stop = Arc::new(AtomicBool::new(false));
+    let shared = Arc::new(Shared { tx, opts, watched: Mutex::new(HashSet::new()), stop: Arc::clone(&stop) });
     let attached = scan(&shared);
     if let Some(only) = &shared.opts.only_touchpad {
         if !shared.watched.lock().unwrap().contains(only) {
@@ -115,12 +165,13 @@ pub fn start(tx: Sender<Msg>, opts: Options) -> usize {
     if shared.opts.hotplug {
         let shared = Arc::clone(&shared);
         thread::spawn(move || {
-            watch_dir(Path::new("/dev/input"), SETTLE, RETRY, || {
+            let stop = Arc::clone(&shared.stop);
+            watch_dir(Path::new("/dev/input"), SETTLE, RETRY, &stop, || {
                 scan(&shared);
             })
         });
     }
-    attached
+    Handle { attached, stop }
 }
 
 /// Natural order, so event2 comes before event10.
@@ -157,17 +208,18 @@ fn attach(shared: &Arc<Shared>, role: Role, path: PathBuf, dev: Device) {
     let shared = Arc::clone(shared);
     thread::spawn(move || {
         let (tx, verbose) = (shared.tx.clone(), shared.opts.verbose);
+        let stop = Arc::clone(&shared.stop);
         let result = match role {
-            Role::Touchpad => tap::watch(dev, shared.opts.max_ms, shared.opts.scroll_ticks, |event| {
+            Role::Touchpad => tap::watch(dev, shared.opts.max_ms, shared.opts.scroll_ticks, &stop, |event| {
                 if verbose {
                     println!("{event:?}");
                 }
                 let _ = tx.send(Msg::Pad(event));
             }),
-            Role::Keyboard => keyboard::watch(dev, |ev| {
+            Role::Keyboard => keyboard::watch(dev, &stop, |ev| {
                 let _ = tx.send(Msg::Key(ev));
             }),
-            Role::Mouse => mouse::watch(dev, |ev| {
+            Role::Mouse => mouse::watch(dev, &stop, |ev| {
                 if verbose {
                     println!("{ev:?}");
                 }
@@ -219,7 +271,7 @@ const RETRY: Duration = Duration::from_millis(1500);
 /// change (udev gives the `input` group access a moment after creation) both
 /// trigger it, and sibling nodes of one device appear within milliseconds of
 /// each other, so changes are debounced.
-fn watch_dir(dir: &Path, settle: Duration, retry: Duration, rescan: impl Fn()) {
+fn watch_dir(dir: &Path, settle: Duration, retry: Duration, stop: &AtomicBool, rescan: impl Fn()) {
     let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
     let c_dir = CString::new(dir.as_os_str().as_encoded_bytes()).unwrap();
     if fd < 0 || unsafe { libc::inotify_add_watch(fd, c_dir.as_ptr(), libc::IN_CREATE | libc::IN_ATTRIB) } < 0 {
@@ -228,6 +280,13 @@ fn watch_dir(dir: &Path, settle: Duration, retry: Duration, rescan: impl Fn()) {
     }
     let mut buf = [0u8; 4096];
     loop {
+        if stop.load(Ordering::Relaxed) {
+            unsafe { libc::close(fd) };
+            return;
+        }
+        if !wait_readable(fd, STOP_POLL_MS) {
+            continue;
+        }
         let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
         if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
             continue;
@@ -280,8 +339,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let count = Arc::new(AtomicUsize::new(0));
         let (watch_path, counter) = (dir.clone(), Arc::clone(&count));
-        thread::spawn(move || {
-            watch_dir(&watch_path, Duration::from_millis(40), Duration::from_millis(60), || {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let watcher = thread::spawn(move || {
+            watch_dir(&watch_path, Duration::from_millis(40), Duration::from_millis(60), &thread_stop, || {
                 counter.fetch_add(1, Ordering::SeqCst);
             })
         });
@@ -300,6 +361,9 @@ mod tests {
         std::fs::set_permissions(dir.join("event20"), std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
         thread::sleep(Duration::from_millis(500));
         assert_eq!(count.load(Ordering::SeqCst), 4);
+        // Telling it to stop ends the watcher within a poll interval.
+        stop.store(true, Ordering::Relaxed);
+        watcher.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

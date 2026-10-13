@@ -36,6 +36,7 @@ use std::f32::consts::TAU;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -51,7 +52,7 @@ static BUCKLESPRING: &[u8] = include_bytes!("../assets/bucklespring.pack");
 /// Pre-rendered variants per class and stroke.
 pub(crate) const VARIANTS: usize = 4;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KeyEvent {
     pub code: u16,
     pub down: bool,
@@ -65,8 +66,13 @@ pub fn is_keyboard(d: &Device) -> bool {
 }
 
 /// Blocks, reporting key presses and releases (not auto-repeat).
-pub fn watch(mut dev: Device, mut on_key: impl FnMut(KeyEvent)) -> io::Result<()> {
+pub fn watch(mut dev: Device, stop: &AtomicBool, mut on_key: impl FnMut(KeyEvent)) -> io::Result<()> {
     loop {
+        match crate::devices::wait_for_events(&dev, stop) {
+            None => return Ok(()),
+            Some(false) => continue,
+            Some(true) => {}
+        }
         for ev in dev.fetch_events()? {
             if let EventSummary::Key(_, code, value @ (0 | 1)) = ev.destructure() {
                 if code.0 < 0x100 {

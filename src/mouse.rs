@@ -25,6 +25,7 @@ use crate::player::Player;
 use crate::sound;
 use evdev::{AbsoluteAxisCode, Device, EventSummary, KeyCode, RelativeAxisCode};
 use std::io;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -100,12 +101,17 @@ impl Wheel {
 }
 
 /// Blocks, reporting button presses/releases and wheel ticks.
-pub fn watch(mut dev: Device, mut on_event: impl FnMut(Event)) -> io::Result<()> {
+pub fn watch(mut dev: Device, stop: &AtomicBool, mut on_event: impl FnMut(Event)) -> io::Result<()> {
     let hires = dev.supported_relative_axes().is_some_and(|a| {
         a.contains(RelativeAxisCode::REL_WHEEL_HI_RES) || a.contains(RelativeAxisCode::REL_HWHEEL_HI_RES)
     });
     let mut wheel = Wheel::default();
     loop {
+        match crate::devices::wait_for_events(&dev, stop) {
+            None => return Ok(()),
+            Some(false) => continue,
+            Some(true) => {}
+        }
         for ev in dev.fetch_events()? {
             match ev.destructure() {
                 EventSummary::Key(_, code, value @ (0 | 1)) if (0x110..=0x117).contains(&code.0) => {
