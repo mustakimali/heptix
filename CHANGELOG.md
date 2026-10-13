@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-14
+
 ### Added
 - Reader/client split: `heptix --reader` reads the input devices (as a
   dedicated user) and streams events over a unix socket to `heptix --client`,
