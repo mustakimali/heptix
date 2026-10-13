@@ -52,11 +52,11 @@ matching your sound server with `apt`, `dnf`, `pacman` or `zypper`.
 ```sh
 git clone https://github.com/mustakimali/heptix
 cd heptix
-make install-service      # recommended: reader service + your user service (sudo)
-# or: make install        # direct mode, not recommended (input group)
+make install              # builds, then asks which mode to install (see above)
 ```
 
-Pass options in direct mode with `make install ARGS="--keyboard-sound thock --volume 80"`.
+`make install MODE=service` or `MODE=direct` skips the question, and `YES=1`
+takes the defaults. `make uninstall` removes either mode.
 
 **NixOS:** use the flake's module (the install script points you here):
 
@@ -206,7 +206,7 @@ stops reading keyboards altogether.
 
 ```sh
 cargo build --release     # or: nix run github:mustakimali/heptix
-make install              # install + start the service from source (see Install)
+make install              # build and install from source; asks which mode (see Install)
 ```
 
 Uninstall: `systemctl --user disable --now heptix; rm ~/.local/bin/heptix`

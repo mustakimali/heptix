@@ -14,11 +14,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see <https://www.gnu.org/licenses/>.
 
-.PHONY: build run install uninstall install-service uninstall-service status logs
+.PHONY: build run install uninstall status logs logs-reader
 
-UNIT_DIR := $(HOME)/.config/systemd/user
 TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
-ARGS ?=
+# Passed to the installer: make install MODE=service|direct, make install YES=1
+MODE ?=
+YES ?=
 
 ## build: Release build
 build:
@@ -27,38 +28,29 @@ build:
 run:
 	cargo run -- --verbose
 
-## install-service: Build and install the reader service plus your user service (recommended; needs sudo)
-install-service:
+## install: Build, then run the installer, which asks how heptix should read your input:
+##          service mode (recommended, needs sudo) or direct mode (not recommended).
+##          Skip the question with: make install MODE=service  (or MODE=direct, YES=1)
+install:
 	cargo build --release
 	rm -rf $(TARGET_DIR)/stage && mkdir -p $(TARGET_DIR)/stage
 	cp $(TARGET_DIR)/release/heptix $(TARGET_DIR)/stage/
 	cp -r packaging $(TARGET_DIR)/stage/packaging
-	HEPTIX_LOCAL_DIR=$(abspath $(TARGET_DIR)/stage) sh install.sh --service
+	HEPTIX_LOCAL_DIR=$(abspath $(TARGET_DIR)/stage) sh install.sh $(if $(MODE),--$(MODE)) $(if $(YES),--yes)
 
-## uninstall-service: Remove the reader service and the user service
-uninstall-service:
+## uninstall: Remove heptix, whichever mode was installed (keeps your settings and stats)
+uninstall:
 	sh install.sh --uninstall
 
-## install: Install for your user in direct mode (not recommended: needs the 'input' group). Options: make install ARGS="--sound tick --volume 80"
-install:
-	cargo install --path . --root $(HOME)/.local --force
-	mkdir -p $(UNIT_DIR)
-	sed "s|@ARGS@|$(ARGS)|" packaging/direct/heptix.service > $(UNIT_DIR)/heptix.service
-	systemctl --user daemon-reload
-	systemctl --user enable heptix.service
-	systemctl --user restart heptix.service
-	@systemctl --user --no-pager status heptix.service | head -5
-
-## uninstall: Stop the service and remove the binary
-uninstall:
-	-systemctl --user disable --now heptix.service
-	rm -f $(UNIT_DIR)/heptix.service $(HOME)/.local/bin/heptix
-	systemctl --user daemon-reload
-
-## status: Show service status
+## status: Show the reader service (service mode) and your user service
 status:
-	systemctl --user --no-pager status heptix.service
+	-systemctl --no-pager status heptix-reader.service | head -5
+	-systemctl --user --no-pager status heptix.service | head -5
 
-## logs: Follow service logs
+## logs: Follow your user service's log
 logs:
 	journalctl --user -u heptix.service -f
+
+## logs-reader: Follow the reader service's log (service mode; may need sudo)
+logs-reader:
+	journalctl -u heptix-reader.service -f

@@ -31,8 +31,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   the new unit. `HEPTIX_DRY_RUN=1` prints the steps without doing them.
 - `packaging/` with the reader system unit (no network, private namespace,
   system-call filter, only the input devices), the client user unit and the
-  `sysusers.d` entry; they ship in the release tarball. `make install-service`,
-  `make uninstall-service`, and a NixOS module (`services.heptix.enable`).
+  `sysusers.d` entry; they ship in the release tarball. `make install` now builds
+  and runs the installer, which asks for the mode (`MODE=service|direct` and
+  `YES=1` skip the question); `make uninstall` removes either mode. A NixOS
+  module (`services.heptix.enable`).
 - The editor's tab bar shows how the service gets its input: reader service
   running, not running, or direct mode.
 - README: install modes, the trust model of the reader and what it does not
@@ -120,7 +122,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   matching the running sound server) using `apt`, `dnf`, `pacman` or `zypper`.
 
 ### Changed
-- `make install` and the user unit now run in explicit direct mode (`--direct`).
+- The direct-mode user unit runs with an explicit `--direct`.
 - Physical touchpad button presses are now reported as clicks, separate from taps.
 - Privacy section rewritten: counters are stored when stats are on, and the
   network lockdown of the service is spelled out.
