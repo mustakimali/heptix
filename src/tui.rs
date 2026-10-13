@@ -455,7 +455,32 @@ fn term_width() -> usize {
     }
 }
 
-fn tab_bar(tab: Tab) -> String {
+/// How the background service gets its input, for the tab bar: the mode, and
+/// whether it is healthy. Asks systemd; nothing is installed or running if it says nothing.
+fn input_status() -> Option<(String, bool)> {
+    let out = |args: &[&str]| -> Option<String> {
+        let o = Command::new("systemctl").args(args).output().ok()?;
+        Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let exec = out(&["--user", "show", "-p", "ExecStart", "--value", "heptix.service"])?;
+    if exec.is_empty() {
+        return None;
+    }
+    // `--run` reads the devices itself unless the reader's socket exists.
+    let auto_direct = exec.contains("--run") && !std::path::Path::new(crate::client::DEFAULT_SOCKET).exists();
+    if exec.contains("--direct") || auto_direct {
+        return Some(("direct mode (input group)".into(), true));
+    }
+    let reader = out(&["is-active", "heptix-reader.service"]).unwrap_or_default();
+    let client = out(&["--user", "is-active", "heptix.service"]).unwrap_or_default();
+    Some(match (reader.as_str(), client.as_str()) {
+        ("active", "active") => ("reader service running".into(), true),
+        ("active", _) => ("reader running, heptix not running".into(), false),
+        _ => ("reader service not running".into(), false),
+    })
+}
+
+fn tab_bar(tab: Tab, status: &Option<(String, bool)>) -> String {
     let mut out = String::from("\x1b[1mheptix\x1b[0m  ");
     for (t, name) in TABS {
         if t == tab {
@@ -465,6 +490,11 @@ fn tab_bar(tab: Tab) -> String {
         }
     }
     out += "\x1b[2m(Tab)\x1b[0m";
+    match status {
+        Some((text, true)) => out += &format!("  \x1b[32m●\x1b[0m\x1b[2m {text}\x1b[0m"),
+        Some((text, false)) => out += &format!("  \x1b[33m●\x1b[0m {text}"),
+        None => {}
+    }
     out
 }
 
@@ -472,7 +502,17 @@ fn tab_bar(tab: Tab) -> String {
 const SETTINGS_CHROME: usize = 7;
 
 #[allow(clippy::too_many_arguments)]
-fn draw_settings(s: &Settings, items: &[Item], sel: Item, top: &mut usize, folded: &[bool; 4], dirty: bool, path: &Path, msg: &str) {
+fn draw_settings(
+    s: &Settings,
+    items: &[Item],
+    sel: Item,
+    top: &mut usize,
+    folded: &[bool; 4],
+    dirty: bool,
+    path: &Path,
+    msg: &str,
+    status: &Option<(String, bool)>,
+) {
     let avail = term_rows().saturating_sub(SETTINGS_CHROME).max(5);
     let pos = items.iter().position(|i| *i == sel).unwrap_or(0);
     if pos < *top {
@@ -484,7 +524,7 @@ fn draw_settings(s: &Settings, items: &[Item], sel: Item, top: &mut usize, folde
     *top = (*top).min(items.len().saturating_sub(avail));
 
     let mut out = String::from("\x1b[2J\x1b[H");
-    out += &tab_bar(Tab::Settings);
+    out += &tab_bar(Tab::Settings, status);
     out += "\r\n\r\n";
     for item in items.iter().skip(*top).take(avail) {
         let (line, indent_dim) = match *item {
@@ -523,7 +563,7 @@ fn draw_settings(s: &Settings, items: &[Item], sel: Item, top: &mut usize, folde
     let _ = io::stdout().flush();
 }
 
-fn draw_stats(tab: Tab, s: &Settings, v: &mut View, dirty: bool, msg: &str) {
+fn draw_stats(tab: Tab, s: &Settings, v: &mut View, dirty: bool, msg: &str, status: &Option<(String, bool)>) {
     let width = term_width();
     let today = stats::Local::now().day;
     let unit = s.distance_unit.as_str();
@@ -536,7 +576,7 @@ fn draw_stats(tab: Tab, s: &Settings, v: &mut View, dirty: bool, msg: &str) {
     let cal_start = today - stats::weekday(today) as i32 - 7 * (weeks as i32 - 1);
     v.cursor = v.cursor.clamp(cal_start, today);
 
-    let mut lines = vec![tab_bar(tab), String::new()];
+    let mut lines = vec![tab_bar(tab, status), String::new()];
     lines.push(if !s.stats {
         " \x1b[33mRecording is off.\x1b[0m Press e to turn it on, then s to save & apply.".into()
     } else if let Some(since) = v.stats.since {
@@ -614,6 +654,7 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
     let mut redraw = true;
     let mut tab = Tab::Settings;
     let mut view = View::load();
+    let mut status = input_status();
     loop {
         if redraw {
             match tab {
@@ -622,9 +663,9 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
                     if !items.contains(&sel) {
                         sel = Item::Row(R_ENABLED);
                     }
-                    draw_settings(&s, &items, sel, &mut top, &folded, dirty, path, &msg)
+                    draw_settings(&s, &items, sel, &mut top, &folded, dirty, path, &msg, &status)
                 }
-                _ => draw_stats(tab, &s, &mut view, dirty, &msg),
+                _ => draw_stats(tab, &s, &mut view, dirty, &msg, &status),
             }
         }
         redraw = false;
@@ -692,7 +733,9 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
                 msg = match s.save(path) {
                     Ok(()) => {
                         dirty = false;
-                        apply_to_service()
+                        let m = apply_to_service();
+                        status = input_status();
+                        m
                     }
                     Err(e) => format!("save failed: {e}"),
                 };

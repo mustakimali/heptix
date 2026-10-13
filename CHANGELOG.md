@@ -33,6 +33,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   system-call filter, only the input devices), the client user unit and the
   `sysusers.d` entry; they ship in the release tarball. `make install-service`,
   `make uninstall-service`, and a NixOS module (`services.heptix.enable`).
+- The editor's tab bar shows how the service gets its input: reader service
+  running, not running, or direct mode.
+- README: install modes, the trust model of the reader and what it does not
+  stop, and the reader's lockdown.
 
 ## [0.7.0] - 2026-10-13
 
