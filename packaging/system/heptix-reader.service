@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# heptix - the missing haptic feedback for Linux!
+# Copyright (C) 2026 M Mustakim Ali
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see <https://www.gnu.org/licenses/>.
+
+# The heptix reader: the only thing that touches the input devices.
+#
+# It runs as its own user, in the 'input' group, so that no program of the
+# person at the keyboard needs that group. It serves events over a unix socket
+# to one verified client (the heptix user service of whoever owns the active
+# session) and refuses everyone else. It has no network access at all.
+[Unit]
+Description=heptix input reader (serves the verified heptix client)
+Documentation=https://github.com/mustakimali/heptix
+
+[Service]
+Type=simple
+User=heptix
+Group=heptix
+SupplementaryGroups=input
+ExecStart=/usr/lib/heptix/heptix --reader
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=heptix
+RuntimeDirectoryMode=0755
+UMask=0022
+
+# To check a client it reads /proc/<pid>/exe and the namespace links of a
+# process owned by another user, which needs CAP_SYS_PTRACE. The ptrace and
+# memory-reading system calls themselves are blocked below.
+AmbientCapabilities=CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_SYS_PTRACE
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@debug @mount @swap @reboot @raw-io @module @obsolete
+
+# No network, no audio, no home directories, a read-only system.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# Input devices only. (Other users' processes must stay visible in /proc.)
+DevicePolicy=closed
+DeviceAllow=char-input rw
+
+[Install]
+WantedBy=multi-user.target

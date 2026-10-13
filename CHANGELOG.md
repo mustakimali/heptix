@@ -22,6 +22,17 @@ versions follow [Semantic Versioning](https://semver.org/).
   the `heptix` user in a root-owned directory.
 - The client process hardens itself (non-dumpable, `no_new_privs`, no core
   dumps) and refuses to run while being traced.
+- Service-mode installation: `install.sh` offers **service mode** (default,
+  recommended: a root-installed reader service running as the `heptix` user, you
+  are not added to the `input` group) or **direct mode** (not recommended: your
+  user needs the `input` group, so any program you run can read your keyboard).
+  `--service`, `--direct`, `--yes` and `--uninstall` options; offers to remove you
+  from the `input` group; removes a previous per-user install, which would shadow
+  the new unit. `HEPTIX_DRY_RUN=1` prints the steps without doing them.
+- `packaging/` with the reader system unit (no network, private namespace,
+  system-call filter, only the input devices), the client user unit and the
+  `sysusers.d` entry; they ship in the release tarball. `make install-service`,
+  `make uninstall-service`, and a NixOS module (`services.heptix.enable`).
 
 ## [0.7.0] - 2026-10-13
 
@@ -105,6 +116,7 @@ versions follow [Semantic Versioning](https://semver.org/).
   matching the running sound server) using `apt`, `dnf`, `pacman` or `zypper`.
 
 ### Changed
+- `make install` and the user unit now run in explicit direct mode (`--direct`).
 - Physical touchpad button presses are now reported as clicks, separate from taps.
 - Privacy section rewritten: counters are stored when stats are on, and the
   network lockdown of the service is spelled out.

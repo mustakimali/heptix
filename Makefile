@@ -14,9 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see <https://www.gnu.org/licenses/>.
 
-.PHONY: build run install uninstall status logs
+.PHONY: build run install uninstall install-service uninstall-service status logs
 
 UNIT_DIR := $(HOME)/.config/systemd/user
+TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
 ARGS ?=
 
 ## build: Release build
@@ -26,11 +27,23 @@ build:
 run:
 	cargo run -- --verbose
 
-## install: Install as a systemd user service. Options: make install ARGS="--sound tick --volume 80"
+## install-service: Build and install the reader service plus your user service (recommended; needs sudo)
+install-service:
+	cargo build --release
+	rm -rf $(TARGET_DIR)/stage && mkdir -p $(TARGET_DIR)/stage
+	cp $(TARGET_DIR)/release/heptix $(TARGET_DIR)/stage/
+	cp -r packaging $(TARGET_DIR)/stage/packaging
+	HEPTIX_LOCAL_DIR=$(abspath $(TARGET_DIR)/stage) sh install.sh --service
+
+## uninstall-service: Remove the reader service and the user service
+uninstall-service:
+	sh install.sh --uninstall
+
+## install: Install for your user in direct mode (not recommended: needs the 'input' group). Options: make install ARGS="--sound tick --volume 80"
 install:
 	cargo install --path . --root $(HOME)/.local --force
 	mkdir -p $(UNIT_DIR)
-	sed "s|@ARGS@|$(ARGS)|" heptix.service > $(UNIT_DIR)/heptix.service
+	sed "s|@ARGS@|$(ARGS)|" packaging/direct/heptix.service > $(UNIT_DIR)/heptix.service
 	systemctl --user daemon-reload
 	systemctl --user enable heptix.service
 	systemctl --user restart heptix.service
