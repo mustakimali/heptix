@@ -143,7 +143,7 @@ pub fn decode_wav(b: &[u8], path: &str) -> Result<(Vec<f32>, u32), String> {
         .chunks_exact(2 * channels)
         .map(|frame| {
             let sum: f32 = frame
-                .chunks_exact(2)
+                .as_chunks::<2>().0.iter()
                 .map(|s| i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0)
                 .sum();
             sum / channels as f32
@@ -282,7 +282,7 @@ mod tests {
             let loud = preset(name, 100).unwrap();
             let quiet = preset(name, 10).unwrap();
             assert!(!loud.is_empty());
-            let peak = |p: &Pcm| p.chunks_exact(2).map(|s| i16::from_le_bytes([s[0], s[1]]).abs()).max().unwrap();
+            let peak = |p: &Pcm| p.as_chunks::<2>().0.iter().map(|s| i16::from_le_bytes([s[0], s[1]]).abs()).max().unwrap();
             assert!(peak(&loud) > peak(&quiet) * 5, "{name}");
         }
     }
@@ -303,7 +303,7 @@ mod tests {
             caf.extend(&sample.to_le_bytes()[..3]);
         }
         let pcm = from_caf_bytes(&caf, 100).unwrap();
-        let s: Vec<i16> = pcm.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        let s: Vec<i16> = pcm.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
         assert_eq!(s.len(), 3);
         assert!(s[1] > 10_000 && s[2] < -10_000, "{s:?}");
     }
@@ -312,7 +312,7 @@ mod tests {
     fn wheel_of_time_is_embedded_and_scales_with_volume() {
         let loud = load("wheel_of_time", 100).unwrap();
         let quiet = load("wheel_of_time", 10).unwrap();
-        let peak = |p: &Pcm| p.chunks_exact(2).map(|s| i16::from_le_bytes([s[0], s[1]]).abs()).max().unwrap();
+        let peak = |p: &Pcm| p.as_chunks::<2>().0.iter().map(|s| i16::from_le_bytes([s[0], s[1]]).abs()).max().unwrap();
         assert!(loud.len() > 1000);
         assert!(peak(&loud) > peak(&quiet) * 5);
     }

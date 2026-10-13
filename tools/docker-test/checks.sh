@@ -15,6 +15,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see <https://www.gnu.org/licenses/>.
 
+# The checks pass single-quoted scripts to `sh -c` on purpose.
+# shellcheck disable=SC2016
+
 # Runs inside the container started by run.sh, as root, with /stage holding the
 # static heptix binary, packaging/ and install.sh.
 set -u

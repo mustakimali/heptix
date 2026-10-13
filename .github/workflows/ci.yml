@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# heptix - the missing haptic feedback for Linux!
+# Copyright (C) 2026 M Mustakim Ali
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see <https://www.gnu.org/licenses/>.
+
+name: ci
+
+# Runs on every pull request and every push to the default branch: lint, unit
+# tests on x86_64 and arm64, then the installer end to end on several distros
+# (real systemd in containers) and the NixOS module in a NixOS VM.
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup component add clippy
+      - name: clippy (warnings are errors)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: shellcheck (installer and test scripts)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck -s sh install.sh tools/docker-test/*.sh
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable
+      - run: cargo test
+
+  # The static binary the release ships; the install jobs test exactly this.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: rustup update stable && rustup target add x86_64-unknown-linux-musl
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heptix-musl
+          path: target/x86_64-unknown-linux-musl/release/heptix
+          retention-days: 3
+
+  # service-mode and direct-mode install, client verification, refusals,
+  # reconnect and uninstall, on a real systemd inside a container
+  install:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [debian, ubuntu, fedora, arch, alpine]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: heptix-musl
+          path: bin
+      - run: chmod +x bin/heptix
+      - name: installer on ${{ matrix.distro }}
+        run: tools/docker-test/run.sh bin/heptix ${{ matrix.distro }}
+
+  # the flake's NixOS module, run in a NixOS VM (needs KVM)
+  nixos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            system-features = nixos-test benchmark big-parallel kvm
+      - run: nix flake check --no-build
+      - run: nix build .#checks.x86_64-linux.nixos-module -L
+
+  # One status to require in branch protection.
+  all:
+    if: always()
+    needs: [lint, test, build, install, nixos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every job passed
+        run: |
+          echo '${{ toJSON(needs) }}'
+          test "${{ contains(needs.*.result, 'failure') }}" = false
+          test "${{ contains(needs.*.result, 'cancelled') }}" = false
