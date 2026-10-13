@@ -115,7 +115,14 @@ fn session(cfg: &Config, sub: &Subscribe, tx: &Sender<Msg>, stop: &AtomicBool) -
         ));
     }
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-    stream.write_all(&proto::subscribe(sub))?;
+    let refused = |e: io::Error| match e.kind() {
+        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset => io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "the reader refused the connection (it only serves the heptix user service; see its log)",
+        ),
+        _ => e,
+    };
+    stream.write_all(&proto::subscribe(sub)).map_err(refused)?;
     stream.set_read_timeout(Some(Duration::from_secs(1)))?;
 
     let (mut buf, mut chunk, mut greeted) = (FrameBuf::default(), [0u8; 256], false);
@@ -127,7 +134,7 @@ fn session(cfg: &Config, sub: &Subscribe, tx: &Sender<Msg>, stop: &AtomicBool) -
             Ok(0) => return if greeted { Ok(()) } else { Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the reader refused the connection")) },
             Ok(n) => n,
             Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => continue,
-            Err(e) => return Err(e),
+            Err(e) => return Err(if greeted { e } else { refused(e) }),
         };
         buf.push(&chunk[..n]);
         while let Some(frame) = buf.next_frame() {

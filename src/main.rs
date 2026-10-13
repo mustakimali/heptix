@@ -17,6 +17,7 @@
 mod client;
 mod config;
 mod devices;
+mod harden;
 mod heatmap;
 mod keyboard;
 mod mouse;
@@ -29,9 +30,10 @@ mod stats;
 mod sysvol;
 mod tap;
 mod tui;
+mod verify;
 
 use config::Settings;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -55,7 +57,11 @@ OPTIONS:
                       not recommended, see the README)
   --reader            Run the reader service (installed as a system service, not by hand)
   --reader-socket <P> Socket path (default /run/heptix/events.sock)
-  --reader-uid <UID>  Reader: the one user id served. Client: the user id the reader runs as
+  --reader-uid <UID>  Reader: serve only this user id (default: the user of the active seat
+                      session, or those listed in /etc/heptix/allow-uids). Client: the
+                      user id the reader runs as (default: the 'heptix' user)
+  --reader-insecure   Reader, testing only: skip checking the client (needs --reader-uid)
+  --reader-unsafe-install  Reader, testing only: serve from a binary that is not root-owned
   --enabled <BOOL>    Master switch: false keeps heptix idle (no input read, no sound, no stats)
   --tui               Open the settings editor even with other options
   --config <PATH>     Use this config file
@@ -108,6 +114,8 @@ struct Cli {
     direct: bool,
     reader_socket: Option<PathBuf>,
     reader_uid: Option<u32>,
+    reader_insecure: bool,
+    reader_unsafe_install: bool,
     tui: bool,
     list: bool,
     preview: bool,
@@ -126,6 +134,8 @@ fn parse_args() -> Cli {
         direct: false,
         reader_socket: None,
         reader_uid: None,
+        reader_insecure: false,
+        reader_unsafe_install: false,
         tui: false,
         list: false,
         preview: false,
@@ -153,6 +163,8 @@ fn parse_args() -> Cli {
             "--reader" => c.reader = true,
             "--client" => c.client = true,
             "--direct" => c.direct = true,
+            "--reader-insecure" => c.reader_insecure = true,
+            "--reader-unsafe-install" => c.reader_unsafe_install = true,
             "--reader-socket" => c.reader_socket = Some(value("--reader-socket").into()),
             "--reader-uid" => {
                 let v = value("--reader-uid");
@@ -212,11 +224,31 @@ fn load_sound(spec: &str, volume: u32) -> Vec<u8> {
 /// The reader service: serves input events to the verified client and nothing else.
 fn run_reader(cli: &Cli) -> ! {
     let socket = cli.reader_socket.clone().unwrap_or_else(|| client::DEFAULT_SOCKET.into());
-    let Some(uid) = cli.reader_uid else {
-        eprintln!("--reader needs --reader-uid <UID> (the one user served)");
-        exit(2)
+    let auth: Arc<dyn reader::Authorizer> = if cli.reader_insecure {
+        let Some(uid) = cli.reader_uid else {
+            eprintln!("--reader-insecure needs --reader-uid <UID>");
+            exit(2)
+        };
+        eprintln!("WARNING: --reader-insecure: the client is NOT verified; for testing only");
+        Arc::new(reader::AllowUid(uid))
+    } else {
+        if !cli.reader_unsafe_install {
+            if let Err(why) = verify::check_install(Path::new("/proc/self/exe")) {
+                eprintln!("refusing to serve: {why}. Install heptix as root (see the README), or use --reader-unsafe-install for testing.");
+                exit(1)
+            }
+        }
+        let proc = verify::ProcFs::system();
+        let allowed = match cli.reader_uid {
+            Some(uid) => verify::Allowed::Fixed(uid),
+            None => verify::Allowed::Seat { seat: "/run/systemd/seats/seat0".into(), allowlist: "/etc/heptix/allow-uids".into() },
+        };
+        let policy = verify::Policy::for_this_process(&proc, allowed, true, true).unwrap_or_else(|e| {
+            eprintln!("cannot describe this process: {e}");
+            exit(1)
+        });
+        Arc::new(verify::Verified { proc, policy })
     };
-    let auth: Arc<dyn reader::Authorizer> = Arc::new(reader::AllowUid(uid));
     let listener = reader::bind(&socket).unwrap_or_else(|e| {
         eprintln!("cannot listen on {}: {e}", socket.display());
         exit(1)
@@ -320,6 +352,15 @@ fn main() {
             thread::sleep(std::time::Duration::from_millis(500));
         }
         return;
+    }
+
+    // From here on this process holds raw input events: make it hard to inspect, before
+    // any other thread exists. (The reader's checks for the client rely on this.)
+    if !cli.preview {
+        if let Err(e) = harden::harden_process() {
+            eprintln!("cannot harden the process: {e}");
+            exit(1);
+        }
     }
 
     let (tap_volume, scroll_volume, keyboard_volume, mouse_volume) = settings.effective_volumes();

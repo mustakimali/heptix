@@ -104,7 +104,7 @@ struct RefusalLog(AtomicU64);
 impl RefusalLog {
     fn note(&self, peer: &PeerInfo, why: &str) {
         let n = self.0.fetch_add(1, Ordering::Relaxed) + 1;
-        if n <= 5 || n % 100 == 0 {
+        if n <= 5 || n.is_multiple_of(100) {
             eprintln!("refused connection from pid {} uid {} ({n} so far): {why}", peer.pid, peer.uid);
         }
     }

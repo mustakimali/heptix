@@ -27,7 +27,6 @@ const SO_PEERPIDFD: libc::c_int = 77;
 pub struct PeerInfo {
     pub pid: i32,
     pub uid: u32,
-    pub gid: u32,
     /// Pins the peer process; `None` on kernels without `SO_PEERPIDFD`.
     pub pidfd: Option<OwnedFd>,
 }
@@ -52,7 +51,7 @@ pub fn peer_info(stream: &UnixStream) -> io::Result<PeerInfo> {
     let pidfd = got.then(|| unsafe { OwnedFd::from_raw_fd(pidfd) });
     // Prefer the pid the pidfd pins; fall back to the one in the credentials.
     let pid = pidfd.as_ref().and_then(pid_of_pidfd).unwrap_or(cred.pid);
-    Ok(PeerInfo { pid, uid: cred.uid, gid: cred.gid, pidfd })
+    Ok(PeerInfo { pid, uid: cred.uid, pidfd })
 }
 
 /// The numeric user id of a named user, if it exists.
