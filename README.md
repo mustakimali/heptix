@@ -209,6 +209,10 @@ cargo build --release     # or: nix run github:mustakimali/heptix
 make install              # build and install from source; asks which mode (see Install)
 ```
 
+`tools/docker-test/run.sh <static heptix binary>` tests the installer end to end
+in a Debian container running real systemd (see the script for how to build the
+musl binary it needs).
+
 Uninstall: `systemctl --user disable --now heptix; rm ~/.local/bin/heptix`
 
 Linux only. Releases are published automatically when `version` in
