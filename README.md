@@ -7,7 +7,19 @@ scroll with two fingers. Also clicks for mouse buttons and ticks for the mouse
 wheel. Also plays mechanical keyboard sounds as you type
 (Model M by default; set `keyboard_sound = "off"` to disable). Works on X11 and Wayland (reads input devices via evdev).
 
-![heptix settings editor](screenshot.png)
+<p align="center"><img src="docs/settings.png" alt="heptix settings editor" width="720"></p>
+
+The Activity view shows when and how much you type, tap and scroll. The images
+here use made-up data (see `tools/render_screenshots.py`).
+
+<p align="center"><img src="docs/activity.png" alt="heptix activity heatmap and stats table" width="720"></p>
+
+<table>
+  <tr>
+    <td><img src="docs/hours.png" alt="heptix hours of the day heatmap"></td>
+    <td><img src="docs/keys.png" alt="heptix most and least used keys"></td>
+  </tr>
+</table>
 
 ## Install
 
@@ -85,12 +97,19 @@ and `stats = false` and heptix stops reading keyboards altogether.
 
 - `heptix` opens the settings editor (sound, volumes, tap length, scroll
   density; changes preview as you make them, `s` saves and restarts the service).
+- The Settings view groups related options under **Sounds**, **Volume**,
+  **Touchpad** and **Activity** headers (`Enter` or `←/→` on a header folds it),
+  with a short explanation of the selected item underneath. In auto volume mode
+  only the mode and the auto reference are shown; custom mode shows the four
+  volumes. On small terminals the list scrolls.
 - The editor also has **Activity**, **Hours** and **Keys** views (`Tab` to
   switch): a GitHub-style heatmap of your keystrokes, touchpad taps, clicks,
   scroll ticks or scroll distance by day, a weekday-by-hour grid of when you
   are active, your most and least used keys (plus a keyboard heatmap), and how
   far you have scrolled today, this week and in total (km or miles, `u` to
-  switch). `heptix --stats` prints a text summary. See Privacy for what is stored.
+  switch). Under the Activity heatmap a table gives keys, taps, clicks, scroll
+  ticks and scroll distance for the selected day, today, this week, this month
+  and all time. `heptix --stats` prints a text summary with the same table. See Privacy for what is stored.
 - `heptix --run` runs with the saved settings; other options override them
   (`heptix --help`).
 - Settings: `~/.config/heptix/config.toml` (created on first run). `enabled` at

@@ -205,7 +205,10 @@ fn button_pitch(code: u16, recorded: bool) -> f32 {
 
 /// Both recordings scaled by the same factor (so the release keeps its natural
 /// level relative to the press), with a short fade-out, as playable PCM.
-fn recorded_bank() -> Result<(Vec<Arc<Vec<u8>>>, Vec<Arc<Vec<u8>>>), String> {
+/// Pre-rendered variants of one stroke.
+type Bank = Vec<Arc<Vec<u8>>>;
+
+fn recorded_bank() -> Result<(Bank, Bank), String> {
     let (mut down, rate_down) = sound::decode_wav(RECORDED_DOWN, "mouse-click-down.wav")?;
     let (mut up, rate_up) = sound::decode_wav(RECORDED_UP, "mouse-click-up.wav")?;
     let peak = down.iter().chain(up.iter()).fold(1e-6f32, |m, x| m.max(x.abs()));

@@ -46,7 +46,7 @@ const ROWS: [&str; 16] = [
     "Auto reference",
     "Max tap length",
     "Scroll density",
-    "Activity stats",
+    "Record activity",
     "Per-key counts",
     "Distance unit",
 ];
@@ -74,6 +74,79 @@ fn locked(s: &Settings, row: usize) -> bool {
         R_TAP_VOLUME | R_SCROLL_VOLUME | R_KEYBOARD_VOLUME | R_MOUSE_VOLUME => s.is_auto_volume(),
         R_AUTO_REFERENCE => !s.is_auto_volume(),
         _ => false,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Group {
+    Sounds,
+    Volume,
+    Touchpad,
+    Activity,
+}
+
+const GROUPS: [(Group, &str); 4] =
+    [(Group::Sounds, "Sounds"), (Group::Volume, "Volume"), (Group::Touchpad, "Touchpad"), (Group::Activity, "Activity")];
+
+/// A line the cursor can be on: a setting, or a group header (folds the group).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Item {
+    Row(usize),
+    Header(Group),
+}
+
+/// Settings shown under a group. Volume rows that do nothing in the current
+/// mode are left out, not greyed out.
+fn group_rows(g: Group, s: &Settings) -> Vec<usize> {
+    match g {
+        Group::Sounds => vec![R_TAP_SOUND, R_SCROLL_SOUND, R_KEYBOARD_SOUND, R_MOUSE_SOUND],
+        Group::Volume if s.is_auto_volume() => vec![R_VOLUME_MODE, R_AUTO_REFERENCE],
+        Group::Volume => vec![R_VOLUME_MODE, R_TAP_VOLUME, R_SCROLL_VOLUME, R_KEYBOARD_VOLUME, R_MOUSE_VOLUME],
+        Group::Touchpad => vec![R_MAX_MS, R_DENSITY],
+        Group::Activity => vec![R_STATS, R_STATS_KEYS, R_UNIT],
+    }
+}
+
+/// Everything currently on screen, top to bottom.
+fn visible_items(s: &Settings, folded: &[bool; 4]) -> Vec<Item> {
+    let mut items = vec![Item::Row(R_ENABLED)];
+    for (g, _) in GROUPS {
+        items.push(Item::Header(g));
+        if !folded[g as usize] {
+            items.extend(group_rows(g, s).into_iter().map(Item::Row));
+        }
+    }
+    items
+}
+
+const PRIVACY: &str = "Counters only: never key order, timing or text. The service has no network access.";
+
+/// Two lines explaining the selected item.
+fn help(item: Item) -> [&'static str; 2] {
+    match item {
+        Item::Header(Group::Sounds) => ["Which sound plays for each kind of input.", "Enter or ←/→ folds this group."],
+        Item::Header(Group::Volume) => ["How loud the sounds are.", "Enter or ←/→ folds this group."],
+        Item::Header(Group::Touchpad) => ["Touchpad tap and scroll detection.", "Enter or ←/→ folds this group."],
+        Item::Header(Group::Activity) => ["Counting what you type, tap and scroll, for the Activity views.", PRIVACY],
+        Item::Row(R_ENABLED) => {
+            ["Master switch. Off: nothing is read, played or recorded (stays running, idle).", "Turn it back on and press s to apply."]
+        }
+        Item::Row(R_TAP_SOUND) => ["Sound for touchpad taps and physical touchpad clicks.", ""],
+        Item::Row(R_SCROLL_SOUND) => ["Tick for two-finger scrolling and the mouse wheel; off silences both.", ""],
+        Item::Row(R_KEYBOARD_SOUND) => ["Mechanical keyboard sound. Only key down/up picks a click; nothing is logged.", ""],
+        Item::Row(R_MOUSE_SOUND) => ["Mouse buttons: a different click for button down and up.", "The wheel uses the scroll sound."],
+        Item::Row(R_VOLUME_MODE) => ["auto: quieter as the system volume rises, so never too loud.", "custom: set each volume yourself."],
+        Item::Row(R_AUTO_REFERENCE) => ["System volume (%) up to which sounds play at full level.", "Above it heptix gets quieter, so the output stays the same."],
+        Item::Row(R_TAP_VOLUME) => ["Volume of tap and click sounds (custom mode).", ""],
+        Item::Row(R_SCROLL_VOLUME) => ["Volume of scroll ticks (custom mode).", ""],
+        Item::Row(R_KEYBOARD_VOLUME) => ["Volume of keyboard sounds (custom mode).", ""],
+        Item::Row(R_MOUSE_VOLUME) => ["Volume of mouse button sounds (custom mode).", ""],
+        Item::Row(R_MAX_MS) => ["Longest touch (ms) still counted as a tap.", ""],
+        Item::Row(R_DENSITY) => ["Scroll ticks per pad height; higher is denser.", ""],
+        Item::Row(R_STATS) => ["Count keys, taps, clicks and scrolling (see the Activity view).", PRIVACY],
+        Item::Row(R_STATS_KEYS) => ["Also count presses per key, for the Keys view. Needs Record activity.", PRIVACY],
+        Item::Row(R_UNIT) => ["Unit for scroll distance: kilometres or miles.", ""],
+        Item::Row(_) => ["", ""],
     }
 }
 
@@ -360,6 +433,17 @@ impl View {
     }
 }
 
+fn term_rows() -> usize {
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_row > 0 {
+            ws.ws_row as usize
+        } else {
+            24
+        }
+    }
+}
+
 fn term_width() -> usize {
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
@@ -384,27 +468,57 @@ fn tab_bar(tab: Tab) -> String {
     out
 }
 
-fn draw_settings(s: &Settings, sel: usize, dirty: bool, path: &Path, msg: &str) {
+/// Lines around the settings list: tab bar, blank, blank, 2 help lines, hints, status.
+const SETTINGS_CHROME: usize = 7;
+
+#[allow(clippy::too_many_arguments)]
+fn draw_settings(s: &Settings, items: &[Item], sel: Item, top: &mut usize, folded: &[bool; 4], dirty: bool, path: &Path, msg: &str) {
+    let avail = term_rows().saturating_sub(SETTINGS_CHROME).max(5);
+    let pos = items.iter().position(|i| *i == sel).unwrap_or(0);
+    if pos < *top {
+        *top = pos;
+    }
+    if pos >= *top + avail {
+        *top = pos + 1 - avail;
+    }
+    *top = (*top).min(items.len().saturating_sub(avail));
+
     let mut out = String::from("\x1b[2J\x1b[H");
     out += &tab_bar(Tab::Settings);
     out += "\r\n\r\n";
-    for (i, name) in ROWS.iter().enumerate() {
-        let line = format!(" {name:<16} < {} >", value_text(s, i));
-        let dim = if locked(s, i) || (!s.enabled && i != R_ENABLED) { "\x1b[2m" } else { "" };
-        if i == sel {
+    for item in items.iter().skip(*top).take(avail) {
+        let (line, indent_dim) = match *item {
+            Item::Header(g) => {
+                let name = GROUPS[g as usize].1;
+                (format!(" {} {name}", if folded[g as usize] { "▸" } else { "▾" }), false)
+            }
+            Item::Row(R_ENABLED) => (format!(" {:<16} < {} >", ROWS[R_ENABLED], value_text(s, R_ENABLED)), false),
+            Item::Row(r) => (format!("     {:<16} < {} >", ROWS[r], value_text(s, r)), !s.enabled),
+        };
+        let dim = if indent_dim { "\x1b[2m" } else { "" };
+        let bold = if matches!(item, Item::Header(_)) { "\x1b[1m" } else { "" };
+        if *item == sel {
             out += &format!("{dim}\x1b[7m{line}\x1b[0m\r\n");
         } else {
-            out += &format!("{dim}{line}\x1b[0m\r\n");
+            out += &format!("{dim}{bold}{line}\x1b[0m\r\n");
         }
     }
-    if s.enabled {
-        out += " \x1b[2mAuto volume gets quieter as the system volume rises; custom sets the levels.\r\n";
+    let more = (*top > 0, *top + avail < items.len());
+    out += match more {
+        (true, true) => " \x1b[2m↑↓ more\x1b[0m\r\n",
+        (true, false) => " \x1b[2m↑ more\x1b[0m\r\n",
+        (false, true) => " \x1b[2m↓ more\x1b[0m\r\n",
+        _ => "\r\n",
+    };
+    if !s.enabled && sel != Item::Row(R_ENABLED) {
+        out += " \x1b[33mheptix is OFF:\x1b[0m\x1b[2m nothing is played, read or recorded.\x1b[0m\r\n\r\n";
     } else {
-        out += " \x1b[33mheptix is OFF:\x1b[0m\x1b[2m nothing is played, read or recorded. s saves & applies.\r\n";
+        let [a, b] = help(sel);
+        out += &format!(" \x1b[2m{a}\x1b[0m\r\n \x1b[2m{b}\x1b[0m\r\n");
     }
-    out += " Stats: counters only, never key order, timing or text; service has no network.\x1b[0m\r\n";
-    out += " \x1b[2m↑/↓ select  ←/→ change  space/p preview  Tab view  s save & apply  q quit\x1b[0m\r\n";
-    out += &format!(" {}{}\r\n {}\r\n", path.display(), if dirty { "  [unsaved]" } else { "" }, msg);
+    out += " \x1b[2m↑/↓ select  ←/→ change  Enter fold/preview  Tab view  s save  q quit\x1b[0m\r\n";
+    let status = if msg.is_empty() { path.display().to_string() } else { msg.to_string() };
+    out += &format!(" {status}{}", if dirty { "  [unsaved]" } else { "" });
     print!("{out}");
     let _ = io::stdout().flush();
 }
@@ -440,15 +554,19 @@ fn draw_stats(tab: Tab, s: &Settings, v: &mut View, dirty: bool, msg: &str) {
     } else {
         format!(" Metric < {} >   Range < {range_text} >", v.metric.name())
     });
-    lines.push(String::new());
+    if tab != Tab::Activity {
+        lines.push(String::new());
+    }
     let pad = |l: String| format!(" {l}");
     match tab {
         Tab::Activity => {
             lines.extend(heatmap::calendar(&v.stats, today, weeks, v.metric, Some(v.cursor), color).into_iter().map(pad));
             lines.push(String::new());
-            lines.push(format!(" {}", heatmap::day_detail(&v.stats, v.cursor, unit)));
-            lines.push(format!(" {}", heatmap::scroll_distance_line(&v.stats, today, unit)));
-            lines.push(format!(" {}", heatmap::headline(&v.stats, today, cal_start, v.metric, unit)));
+            // Everything else on this view takes 19 lines; the table uses what is left.
+            let data_rows = term_rows().saturating_sub(19).clamp(3, 5);
+            let table = heatmap::stats_table(&v.stats, today, (data_rows >= 4).then_some(v.cursor), data_rows >= 5, v.metric, unit, true);
+            lines.extend(table.into_iter().map(pad));
+            lines.push(format!(" {}", heatmap::table_footer(&v.stats, today, cal_start, v.metric, unit)));
         }
         Tab::Hours => {
             lines.extend(heatmap::hour_grid(&v.stats, today, weeks, v.metric, color).into_iter().map(pad));
@@ -464,14 +582,15 @@ fn draw_stats(tab: Tab, s: &Settings, v: &mut View, dirty: bool, msg: &str) {
             lines.extend(heatmap::keyboard(&v.stats, from, today, color).into_iter().map(pad));
         }
     }
-    lines.push(String::new());
+    if tab != Tab::Activity {
+        lines.push(String::new());
+    }
     lines.push(match tab {
         Tab::Activity => " \x1b[2m←/→ week  ↑/↓ day  m metric  r range  u km/mi  e rec on/off  X wipe  q quit\x1b[0m".into(),
         Tab::Hours => " \x1b[2mm metric  r range  u km/mi  e rec on/off  X wipe  s save & apply  q quit\x1b[0m".into(),
         _ => " \x1b[2mr range  e rec on/off  X wipe  s save & apply  q quit   (US-layout key positions)\x1b[0m".into(),
     });
-    lines.push(" \x1b[2mCounters only: no key order, timing or text. Kept in a private file on this machine;\x1b[0m".into());
-    lines.push(" \x1b[2mthe service runs with its network access blocked, so nothing can leave it.\x1b[0m".into());
+    lines.push(" \x1b[2mCounters only, never key order, timing or text. Service has no network access.\x1b[0m".into());
     lines.push(format!(" {}{}", msg, if dirty { "  [unsaved settings]" } else { "" }));
     print!("\x1b[2J\x1b[H{}", lines.join("\r\n"));
     let _ = io::stdout().flush();
@@ -487,7 +606,9 @@ fn apply_to_service() -> String {
 pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
     let _raw = RawMode::enter()?;
     let preview = Preview::new();
-    let (mut sel, mut dirty) = (0usize, false);
+    let mut dirty = false;
+    let mut sel = Item::Row(R_ENABLED);
+    let (mut top, mut folded) = (0usize, [false; 4]);
     let mut msg = notes.join("; ");
     let mut quit_armed = false;
     let mut redraw = true;
@@ -496,7 +617,13 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
     loop {
         if redraw {
             match tab {
-                Tab::Settings => draw_settings(&s, sel, dirty, path, &msg),
+                Tab::Settings => {
+                    let items = visible_items(&s, &folded);
+                    if !items.contains(&sel) {
+                        sel = Item::Row(R_ENABLED);
+                    }
+                    draw_settings(&s, &items, sel, &mut top, &folded, dirty, path, &msg)
+                }
                 _ => draw_stats(tab, &s, &mut view, dirty, &msg),
             }
         }
@@ -578,23 +705,30 @@ pub fn run(path: &Path, mut s: Settings, notes: &[String]) -> io::Result<()> {
                 msg = "unsaved changes: press q again to discard, s to save".into();
             }
             _ if tab != Tab::Settings => {}
-            Key::Up | Key::Char('k') => sel = (sel + ROWS.len() - 1) % ROWS.len(),
-            Key::Down | Key::Char('j') => sel = (sel + 1) % ROWS.len(),
+            Key::Up | Key::Char('k') | Key::Down | Key::Char('j') => {
+                let items = visible_items(&s, &folded);
+                let pos = items.iter().position(|i| *i == sel).unwrap_or(0);
+                let next = if matches!(key, Key::Up | Key::Char('k')) { (pos + items.len() - 1) % items.len() } else { (pos + 1) % items.len() };
+                sel = items[next];
+            }
             Key::Left | Key::Char('h') | Key::Right | Key::Char('l') => {
                 let dir = if matches!(key, Key::Left | Key::Char('h')) { -1 } else { 1 };
-                if adjust(&mut s, sel, dir) {
-                    dirty = true;
-                    msg.clear();
-                    preview.row(&s, sel);
-                } else if locked(&s, sel) {
-                    msg = if sel == R_AUTO_REFERENCE {
-                        "auto reference only applies in auto mode".into()
-                    } else {
-                        "volumes are automatic: set Volume mode to custom to change them".into()
-                    };
+                match sel {
+                    // ← folds a group, → opens it.
+                    Item::Header(g) => folded[g as usize] = dir < 0,
+                    Item::Row(row) => {
+                        if adjust(&mut s, row, dir) {
+                            dirty = true;
+                            msg.clear();
+                            preview.row(&s, row);
+                        }
+                    }
                 }
             }
-            Key::Char(' ') | Key::Enter => preview.row(&s, sel),
+            Key::Char(' ') | Key::Enter => match sel {
+                Item::Header(g) => folded[g as usize] = !folded[g as usize],
+                Item::Row(row) => preview.row(&s, row),
+            },
             Key::Char('p') => {
                 preview.tap(&s);
                 thread::sleep(Duration::from_millis(350));

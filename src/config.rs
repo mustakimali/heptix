@@ -195,10 +195,12 @@ impl Settings {
         format!(
             "# heptix - the missing haptic feedback for Linux! Settings. Run `heptix` with no arguments to edit them interactively.\n\
              \n\
+             # ── General ──────────────────────────────────────────────────────────────\n\
              # Master switch. Set to false to turn heptix off entirely: it reads no input, plays\n\
              # nothing and records nothing (it stays running, idle, until you turn it back on).\n\
              enabled = {}\n\
              \n\
+             # ── Sounds ───────────────────────────────────────────────────────────────\n\
              # Tap and button-press sound: haptic, tock, tick, thud, crown, wheel_of_time, or a path to a 16-bit WAV\n\
              sound = \"{}\"\n\
              # Two-finger scroll sound: same choices, or \"off\"\n\
@@ -212,6 +214,7 @@ impl Settings {
              # The wheel plays one scroll_sound tick per notch. Only buttons and the wheel are used.\n\
              mouse_sound = \"{}\"\n\
              \n\
+             # ── Volume ───────────────────────────────────────────────────────────────\n\
              # Volume mode: auto = follow the system volume (heptix gets quieter as you turn the\n\
              # system volume up, so it is never too loud); custom = use the volumes below.\n\
              volume_mode = \"{}\"\n\
@@ -226,11 +229,13 @@ impl Settings {
              # Auto mode: system volume (%) at and below which sounds play at full level, 10-100\n\
              auto_reference = {}\n\
              \n\
+             # ── Touchpad ─────────────────────────────────────────────────────────────\n\
              # Longest touch (ms) still counted as a tap\n\
              max_ms = {}\n\
              # Scroll ticks per pad height (higher = denser)\n\
              scroll_ticks = {}\n\
              \n\
+             # ── Activity ─────────────────────────────────────────────────────────────\n\
              # Activity stats: count keys and touchpad actions (counters only: per hour, and per key\n\
              # per day) for the Activity view in `heptix`. Stored in ~/.local/state/heptix/stats.tsv,\n\
              # never sent anywhere (the service runs with no network access). Set false to stop.\n\

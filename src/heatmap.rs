@@ -227,7 +227,7 @@ pub fn key_bars(stats: &Stats, from: i32, to: i32) -> Vec<String> {
     let top_n = totals.len().div_ceil(2).min(8);
     let bot_n = (totals.len() - top_n).min(8);
     let entry = |(code, n): (u16, u32)| format!("{:<8} {} {:>8}", key_label(code), bar(n, max, 12), fmt_num(n as u64));
-    let mut lines = vec![format!("{:<31}  {}", "Most pressed", "Least pressed")];
+    let mut lines = vec![format!("{:<30}  {}", "Most pressed", "Least pressed")];
     for i in 0..top_n {
         let left = entry(totals[i]);
         let right = if i < bot_n { entry(totals[totals.len() - 1 - i]) } else { String::new() };
@@ -280,36 +280,109 @@ pub fn peak_hour(stats: &Stats, today: i32, weeks: usize, metric: Metric, unit: 
             }
         }
     }
-    (best > 0).then(|| format!("busiest {} {:02}:00-{:02}:00 ({})", DAYS[at.0], at.1, (at.1 + 1) % 24, fmt_metric(best, metric, unit)))
+    (best > 0).then(|| format!("Busiest {} {:02}:00-{:02}:00 ({})", DAYS[at.0], at.1, (at.1 + 1) % 24, fmt_metric(best, metric, unit)))
 }
 
-/// One-line breakdown of a single day.
-pub fn day_detail(stats: &Stats, day: i32, unit: &str) -> String {
-    let c = stats.day_counts(day);
-    format!(
-        "{}: {} keys · {} taps · {} clicks · {} scroll ticks · {} scrolled",
-        fmt_day(day),
-        fmt_num(c.keys as u64),
-        fmt_num(c.taps as u64),
-        fmt_num(c.clicks as u64),
-        fmt_num(c.scrolls as u64),
-        fmt_distance(c.scroll_mm as u64, unit)
-    )
+const LABEL_W: usize = 16;
+const NUM_W: usize = 9;
+const DIST_W: usize = 11;
+/// Width of the table: label column, four counters and the distance.
+#[cfg(test)]
+const TABLE_W: usize = LABEL_W + 4 * NUM_W + DIST_W;
+
+fn first_of_month(day: i32) -> i32 {
+    let (_, _, d) = civil_from_days(day);
+    day - (d as i32 - 1)
 }
 
-/// Scroll distance today, this week (Monday to today) and all time.
-pub fn scroll_distance_line(stats: &Stats, today: i32, unit: &str) -> String {
+/// Which column the metric highlights (None for "everything").
+fn metric_column(metric: Metric) -> Option<usize> {
+    match metric {
+        Metric::Keys => Some(0),
+        Metric::Taps => Some(1),
+        Metric::Clicks => Some(2),
+        Metric::Scrolls => Some(3),
+        Metric::Distance => Some(4),
+        Metric::All => None,
+    }
+}
+
+fn table_row(label: &str, c: &Counts, unit: &str, highlight: Option<usize>, styled: bool) -> String {
+    let cells = [
+        (fmt_num(c.keys as u64), NUM_W),
+        (fmt_num(c.taps as u64), NUM_W),
+        (fmt_num(c.clicks as u64), NUM_W),
+        (fmt_num(c.scrolls as u64), NUM_W),
+        (fmt_distance(c.scroll_mm as u64, unit), DIST_W),
+    ];
+    let mut line = format!("{label:<LABEL_W$}");
+    for (i, (text, w)) in cells.iter().enumerate() {
+        let cell = format!("{text:>w$}", w = *w);
+        line += &if styled && highlight == Some(i) { format!("\x1b[1m{cell}\x1b[0m") } else { cell };
+    }
+    line
+}
+
+/// Counters for the selected day, today, this week (Monday to today), this
+/// month and all time, under an underlined header. The column for the
+/// heatmap's metric is bold. Every line is `TABLE_W` columns wide.
+pub fn stats_table(stats: &Stats, today: i32, selected: Option<i32>, show_month: bool, metric: Metric, unit: &str, styled: bool) -> Vec<String> {
+    let highlight = metric_column(metric);
+    let heads = ["Keys", "Taps", "Clicks", "Ticks", "Scrolled"];
+    let widths = [NUM_W, NUM_W, NUM_W, NUM_W, DIST_W];
+    let mut head = format!("{}{:<LABEL_W$}", if styled { "\x1b[4m" } else { "" }, "");
+    for (i, (h, w)) in heads.iter().zip(widths).enumerate() {
+        let cell = format!("{h:>w$}");
+        head += &if styled && highlight == Some(i) { format!("\x1b[1m{cell}\x1b[22m") } else { cell };
+    }
+    if styled {
+        head += "\x1b[0m";
+    }
+
+    let mut lines = vec![head];
+    if let Some(day) = selected {
+        let label = format!("▸ {}", fmt_day_short(day));
+        lines.push(table_row(&label, &stats.day_counts(day), unit, highlight, styled));
+    }
+    lines.push(table_row("  Today", &stats.day_counts(today), unit, highlight, styled));
     let week_start = today - weekday(today) as i32;
-    let day = stats.day_counts(today).scroll_mm as u64;
-    let week = stats.range_counts(week_start, today).scroll_mm as u64;
-    let total = stats.lifetime.scroll_mm as u64;
-    let since = stats.since.map(|d| format!(" (since {})", fmt_day(d))).unwrap_or_default();
-    format!(
-        "Scrolled: today {} · this week {} · all time {}{since}",
-        fmt_distance(day, unit),
-        fmt_distance(week, unit),
-        fmt_distance(total, unit)
-    )
+    lines.push(table_row("  This week", &stats.range_counts(week_start, today), unit, highlight, styled));
+    if show_month {
+        lines.push(table_row("  This month", &stats.range_counts(first_of_month(today), today), unit, highlight, styled));
+    }
+    lines.push(table_row("  All time", &stats.lifetime, unit, highlight, styled));
+    lines
+}
+
+/// "Sun 11 Oct" (no year), for the table's selected-day row.
+fn fmt_day_short(day: i32) -> String {
+    let (_, m, d) = civil_from_days(day);
+    format!("{} {d} {}", DAYS[weekday(day)], MONTHS[m as usize - 1])
+}
+
+/// Busiest day, streak and when recording began, under the table.
+pub fn table_footer(stats: &Stats, today: i32, from: i32, metric: Metric, unit: &str) -> String {
+    let mut parts = Vec::new();
+    if let Some((day, n)) = stats.busiest_day(from, today, metric) {
+        parts.push(format!("busiest {} ({} {})", fmt_day(day), fmt_metric(n, metric, unit), metric.name().to_lowercase()));
+    }
+    let streak = stats.streak(today);
+    if streak > 1 {
+        parts.push(format!("{streak}-day streak"));
+    }
+    if let Some(since) = stats.since {
+        let (y, m, d) = civil_from_days(since);
+        parts.push(format!("since {d} {} {y}", MONTHS[m as usize - 1]));
+    }
+    if parts.is_empty() {
+        "No activity recorded yet.".into()
+    } else {
+        let mut text = parts.join(" · ");
+        if let Some(first) = text.get(..1) {
+            text = first.to_uppercase() + &text[1..];
+        }
+        text
+    }
 }
 
 /// Headline numbers for a range.
@@ -339,15 +412,7 @@ pub fn summary(stats: &Stats, today: i32, unit: &str, color: bool, recording: bo
     lines.push(format!("Keystrokes, last 26 weeks: {}", headline(stats, today, from, Metric::Keys, unit)));
     lines.extend(calendar(stats, today, 26, Metric::Keys, None, color));
     lines.push(String::new());
-    lines.push(scroll_distance_line(stats, today, unit));
-    let l = &stats.lifetime;
-    lines.push(format!(
-        "All time: {} keys · {} taps · {} clicks · {} scroll ticks",
-        fmt_num(l.keys as u64),
-        fmt_num(l.taps as u64),
-        fmt_num(l.clicks as u64),
-        fmt_num(l.scrolls as u64)
-    ));
+    lines.extend(stats_table(stats, today, None, true, Metric::Keys, unit, color));
     lines.push(String::new());
     lines.extend(key_bars(stats, from, today));
     lines
@@ -476,11 +541,63 @@ mod tests {
     }
 
     #[test]
-    fn scroll_distance_line_covers_today_week_and_total() {
+    fn table_has_header_selected_today_week_month_and_all_time_rows_of_equal_width() {
         let (s, today) = sample();
-        let line = scroll_distance_line(&s, today, "km");
-        assert!(line.contains("today 1.5 m") && line.contains("this week 1.5 m") && line.contains("all time 1.5 m"), "{line}");
-        assert!(day_detail(&s, today, "mi").contains("scrolled"));
+        let lines = stats_table(&s, today, Some(today - 1), true, Metric::Keys, "km", true);
+        assert_eq!(lines.len(), 6);
+        assert!(visible(&lines[0]).trim_start().starts_with("Keys"));
+        assert!(visible(&lines[0]).trim_end().ends_with("Scrolled"));
+        assert!(visible(&lines[1]).starts_with("▸ Sat 10 Oct"));
+        for (line, label) in lines[2..].iter().zip(["Today", "This week", "This month", "All time"]) {
+            assert!(visible(line).contains(label), "{label}");
+        }
+        for l in &lines {
+            assert_eq!(visible(l).chars().count(), TABLE_W, "{}", visible(l));
+        }
+        // Without the selected day or the month, down to three rows.
+        assert_eq!(stats_table(&s, today, None, false, Metric::Keys, "km", true).len(), 4);
+    }
+
+    #[test]
+    fn table_numbers_are_right() {
+        let (s, today) = sample();
+        let lines = stats_table(&s, today, Some(today), true, Metric::Keys, "km", true);
+        let today_row = visible(&lines[2]);
+        assert!(today_row.contains("10"), "{today_row}"); // sample: today (a Sunday) = (0 % 7 + 1) * 10 keys
+        assert!(today_row.trim_end().ends_with("1.5 m"));
+        // This week = Monday..today, this month = from the 1st, all time = lifetime.
+        let week: u32 = (0..=6).map(|d| s.day_counts(today - d).keys).sum();
+        assert!(visible(&lines[3]).contains(&fmt_num(week as u64)));
+        let month: u32 = (0..=10).map(|d| s.day_counts(today - d).keys).sum();
+        assert!(visible(&lines[4]).contains(&fmt_num(month as u64)));
+        assert!(visible(&lines[5]).contains(&fmt_num(s.lifetime.keys as u64)));
+        assert_eq!(first_of_month(today), today - 10);
+    }
+
+    #[test]
+    fn table_highlights_the_metric_column_only() {
+        let (s, today) = sample();
+        let bold = |m| stats_table(&s, today, None, false, m, "km", true)[1].matches("\x1b[1m").count();
+        assert_eq!(bold(Metric::Keys), 1);
+        assert_eq!(bold(Metric::Distance), 1);
+        assert_eq!(bold(Metric::All), 0);
+        let keys_row = &stats_table(&s, today, None, false, Metric::Keys, "km", true)[1];
+        let taps_row = &stats_table(&s, today, None, false, Metric::Taps, "km", true)[1];
+        assert_ne!(keys_row, taps_row);
+        // Plain output (piped, or NO_COLOR) carries no escape codes at all.
+        let plain = stats_table(&s, today, Some(today), true, Metric::Keys, "km", false);
+        assert!(plain.iter().all(|l| !l.contains('\x1b')));
+        assert_eq!(plain.iter().map(|l| l.chars().count()).collect::<Vec<_>>(), vec![TABLE_W; plain.len()]);
+    }
+
+    #[test]
+    fn table_footer_names_busiest_day_streak_and_start() {
+        let (s, today) = sample();
+        let text = table_footer(&s, today, today - 59, Metric::Keys, "km");
+        assert!(text.starts_with("Busiest "), "{text}");
+        assert!(text.contains("-day streak") && text.contains("since "), "{text}");
+        assert!(text.chars().count() < 79, "fits an 80-column screen: {text}");
+        assert_eq!(table_footer(&Stats::default(), today, today - 5, Metric::Keys, "km"), "No activity recorded yet.");
     }
 
     #[test]
@@ -488,7 +605,7 @@ mod tests {
         let (s, today) = sample();
         let lines = summary(&s, today, "km", false, true);
         let text = lines.join("\n");
-        assert!(text.contains("recording is on") && text.contains("Scrolled:") && text.contains("Most pressed"));
-        assert!(text.contains("All time:"));
+        assert!(text.contains("recording is on") && text.contains("Scrolled") && text.contains("Most pressed"));
+        assert!(text.contains("All time") && text.contains("This week"));
     }
 }

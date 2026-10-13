@@ -5,6 +5,25 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-13
+
+### Changed
+- Activity view: the stats under the heatmap are now a table (keys, taps,
+  clicks, scroll ticks, scroll distance) with rows for the selected day, today,
+  this week, this month and all time. The column for the heatmap's metric is
+  bold. A footer line shows the busiest day, the streak and when recording
+  began. Rows are dropped on short terminals. `heptix --stats` prints the same
+  table.
+- Settings editor: options are grouped under Sounds, Volume, Touchpad and
+  Activity headers that can be folded (`Enter`, or `←/→`), with a help line for
+  the selected item, and the list scrolls on short terminals. Volume rows that
+  do nothing in the current mode are hidden instead of greyed out. The
+  "Activity stats" row is now "Record activity".
+- `config.toml` has matching section comments (no change to the keys).
+- Keys view header alignment and the Hours view footer capitalisation fixed.
+- README screenshots are rendered from made-up data by
+  `tools/render_screenshots.py` (random pattern each run).
+
 ## [0.6.0] - 2026-10-12
 
 ### Added
