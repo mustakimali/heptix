@@ -14,14 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see <https://www.gnu.org/licenses/>.
 
-# A Debian with real systemd (PID 1), a lingering login user and sudo, to test
-# the installer end to end. See run.sh.
-FROM debian:12
-RUN apt-get update \
- && apt-get install -y --no-install-recommends systemd systemd-sysv dbus dbus-user-session \
-      sudo procps iproute2 python3 alsa-utils ca-certificates \
- && rm -rf /var/lib/apt/lists/*
-RUN useradd -m -u 1000 -s /bin/bash tester \
- && echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester
+# A distro with real systemd (PID 1), a lingering login user and sudo, to test the
+# installer end to end. See run.sh; BASE is the distro image.
+ARG BASE=debian:12
+FROM ${BASE}
+COPY setup.sh /setup.sh
+RUN sh /setup.sh && rm /setup.sh
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

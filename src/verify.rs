@@ -251,19 +251,30 @@ impl Authorizer for Verified {
     }
 }
 
+/// Whether one path component (a file or a directory) keeps the binary safe from
+/// replacement: root's, and not writable by group or others. The one exception is
+/// a sticky directory (the Nix store is `root:nixbld` mode 1775, like /tmp): its
+/// entries can only be removed or renamed by their own owners, and we require
+/// every entry on the path to be root's, so nobody else can swap them.
+fn component_ok(uid: u32, mode: u32, is_dir: bool) -> Result<(), &'static str> {
+    if uid != 0 {
+        return Err("is not owned by root");
+    }
+    let sticky_dir = is_dir && mode & 0o1000 != 0;
+    if mode & 0o022 != 0 && !sticky_dir {
+        return Err("is writable by group or others");
+    }
+    Ok(())
+}
+
 /// The reader refuses to serve from a binary that someone else could replace:
-/// it and every directory above it must belong to root and not be writable by others.
+/// it and every directory above it must pass `component_ok`.
 pub fn check_install(exe: &Path) -> Result<(), String> {
     let real = std::fs::canonicalize(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
     let mut path = Some(real.as_path());
     while let Some(p) = path {
         let m = std::fs::metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
-        if m.uid() != 0 {
-            return Err(format!("{} is not owned by root", p.display()));
-        }
-        if m.mode() & 0o022 != 0 {
-            return Err(format!("{} is writable by group or others", p.display()));
-        }
+        component_ok(m.uid(), m.mode(), m.is_dir()).map_err(|why| format!("{} {why}", p.display()))?;
         path = p.parent();
     }
     Ok(())
@@ -468,6 +479,20 @@ mod tests {
         fs::write(&seat, "IS_SEAT0=1\n").unwrap();
         assert!(allowed().check(1001).is_ok());
         assert!(allowed().check(1000).is_err());
+    }
+
+    #[test]
+    fn path_components_must_be_roots_and_unwritable_except_sticky_directories() {
+        assert_eq!(component_ok(0, 0o755, true), Ok(()));
+        assert_eq!(component_ok(0, 0o755, false), Ok(()));
+        assert_eq!(component_ok(0, 0o775, true), Err("is writable by group or others"));
+        assert_eq!(component_ok(0, 0o777, true), Err("is writable by group or others"));
+        assert_eq!(component_ok(0, 0o1775, true), Ok(()), "the Nix store: sticky and group-writable");
+        assert_eq!(component_ok(0, 0o1777, true), Ok(()), "/tmp-like");
+        assert_eq!(component_ok(0, 0o1775, false), Err("is writable by group or others"), "sticky means nothing on a file");
+        assert_eq!(component_ok(0, 0o666, false), Err("is writable by group or others"));
+        assert_eq!(component_ok(1000, 0o755, true), Err("is not owned by root"));
+        assert_eq!(component_ok(1000, 0o1755, true), Err("is not owned by root"), "sticky never excuses a non-root owner");
     }
 
     #[test]

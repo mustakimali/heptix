@@ -49,24 +49,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hardening_sets_the_flags_and_the_proc_entry_turns_root_owned() {
+    fn hardening_sets_the_flags_and_hides_the_proc_entries() {
         // Runs in a child so the test process itself stays inspectable.
         let me = std::process::id();
         if std::env::var_os("HEPTIX_HARDEN_CHILD").is_some() {
+            let before_owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata("/proc/self/environ").unwrap());
             harden_process().unwrap();
             // no_new_privs belongs to the calling thread (tests run on their own thread).
             let status = std::fs::read_to_string("/proc/thread-self/status").unwrap();
             assert!(status.lines().any(|l| l.strip_prefix("NoNewPrivs:").map(str::trim) == Some("1")));
             let dumpable = unsafe { libc::prctl(libc::PR_GET_DUMPABLE) };
             assert_eq!(dumpable, 0);
-            // The private /proc entries now belong to root; that is what the reader checks.
+            // The private /proc entries stop belonging to us. (To the host's root, which is
+            // uid 0 normally and an unmapped id inside a user namespace such as a build sandbox.)
             let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata("/proc/self/environ").unwrap());
-            assert_eq!(owner, 0);
+            assert_ne!(owner, before_owner, "environ must no longer belong to the process's own user");
             return;
         }
         let exe = std::env::current_exe().unwrap();
         let out = std::process::Command::new(exe)
-            .args(["--exact", "harden::tests::hardening_sets_the_flags_and_the_proc_entry_turns_root_owned", "--nocapture"])
+            .args(["--exact", "harden::tests::hardening_sets_the_flags_and_hides_the_proc_entries", "--nocapture"])
             .env("HEPTIX_HARDEN_CHILD", "1")
             .output()
             .unwrap();
