@@ -80,11 +80,31 @@ write_file() { if [ "$DRY" = 1 ]; then printf '+ write %s\n' "$1"; cat >/dev/nul
 
 have_tty() { ( : </dev/tty ) 2>/dev/null; }
 
+# A program that started us (a full-screen tool, a shell integration) may have left
+# the terminal raw, where Enter arrives as a carriage return that `read` never
+# accepts (it shows up as ^M). So before any prompt is printed, the terminal is put
+# into normal line mode, and afterwards it is put back as it was.
+tty_sane() {
+  TTY_SAVED=$(stty -g </dev/tty 2>/dev/null) || TTY_SAVED=""
+  stty icanon icrnl echo </dev/tty 2>/dev/null || true
+}
+tty_restore() {
+  if [ -n "${TTY_SAVED:-}" ]; then stty "$TTY_SAVED" </dev/tty 2>/dev/null || true; fi
+}
+# read_tty <var>: one line from the terminal into <var>; call between tty_sane and tty_restore.
+read_tty() {
+  _line=""
+  read -r _line </dev/tty || _line=""
+  eval "$1=\$_line"
+}
+
 # ask <prompt> <Y|N>: yes/no with a default; no question without a terminal or with --yes.
 ask() {
   if [ "$ASSUME_YES" = 1 ] || ! have_tty; then [ "$2" = Y ]; return; fi
+  tty_sane
   printf '%s ' "$1" >/dev/tty
-  read -r ans </dev/tty || ans=""
+  read_tty ans
+  tty_restore
   case "$ans" in "") [ "$2" = Y ] ;; [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
@@ -152,6 +172,7 @@ obtain() {
 choose_mode() {
   [ -n "$MODE" ] && return
   if [ "$ASSUME_YES" = 1 ] || ! have_tty; then MODE=service; return; fi
+  tty_sane
   cat >/dev/tty <<'EOF'
 
 How should heptix read your keyboard and touchpad?
@@ -168,7 +189,9 @@ How should heptix read your keyboard and touchpad?
 
 EOF
   printf 'Choose [1]: ' >/dev/tty
-  read -r ans </dev/tty || ans=1
+  read_tty ans
+  tty_restore
+  [ -n "$ans" ] || ans=1
   case "$ans" in 2) MODE=direct ;; *) MODE=service ;; esac
 }
 
@@ -340,6 +363,7 @@ if [ -e /etc/NIXOS ]; then
         warn "NixOS: the reader service needs the NixOS module, so installing in direct mode for now."
         MODE=direct
       else
+        tty_sane
         cat >/dev/tty <<'EOF'
 
 This is NixOS, where a script cannot install the reader service. How should
@@ -356,7 +380,9 @@ heptix read your keyboard and touchpad?
 
 EOF
         printf 'Choose [1]: ' >/dev/tty
-        read -r ans </dev/tty || ans=1
+        read_tty ans
+        tty_restore
+        [ -n "$ans" ] || ans=1
         case "$ans" in
           2) nixos_module_help; exit 0 ;;
           *) MODE=direct ;;
