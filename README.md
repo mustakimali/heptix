@@ -58,14 +58,20 @@ make install              # builds, then asks which mode to install (see above)
 `make install MODE=service` or `MODE=direct` skips the question, and `YES=1`
 takes the defaults. `make uninstall` removes either mode.
 
-**NixOS:** use the flake's module (the install script points you here):
+**NixOS:** a script cannot install a system service on a declarative system, so
+the reader service comes from the flake's module:
 
 ```nix
 imports = [ inputs.heptix.nixosModules.default ];
 services.heptix.enable = true;
+# Only on a machine without a graphical session: the user ids to serve.
+# services.heptix.allowUids = [ 1000 ];
 ```
 
-(The module has been evaluated but not yet run on a real NixOS system.)
+`make install` / `install.sh` on NixOS offers direct mode (works immediately,
+replaces an existing per-user install and keeps your settings and stats) or
+shows the module setup. The module is covered by a NixOS VM test:
+`nix build .#checks.x86_64-linux.nixos-module`.
 
 ## Dependencies
 
@@ -209,9 +215,10 @@ cargo build --release     # or: nix run github:mustakimali/heptix
 make install              # build and install from source; asks which mode (see Install)
 ```
 
-`tools/docker-test/run.sh <static heptix binary>` tests the installer end to end
-in a Debian container running real systemd (see the script for how to build the
-musl binary it needs).
+`tools/docker-test/run.sh <static heptix binary> [debian|ubuntu|fedora|arch|alpine]`
+tests the installer end to end in a container running real systemd (Alpine has
+no systemd, so it checks that the installer refuses cleanly); see the script for
+how to build the musl binary it needs.
 
 Uninstall (either mode; your settings and stats are kept):
 `curl -fsSL https://raw.githubusercontent.com/mustakimali/heptix/main/install.sh | sh -s -- --uninstall`,

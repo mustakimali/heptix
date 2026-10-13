@@ -35,10 +35,17 @@ versions follow [Semantic Versioning](https://semver.org/).
   and runs the installer, which asks for the mode (`MODE=service|direct` and
   `YES=1` skip the question); `make uninstall` removes either mode. A NixOS
   module (`services.heptix.enable`).
-- `tools/docker-test/run.sh` tests the installer end to end in a Debian container
-  running real systemd: service-mode install, the client passing the reader's
+- `tools/docker-test/run.sh` tests the installer end to end in Debian, Ubuntu,
+  Fedora and Arch containers running real systemd (and checks that Alpine, which
+  has no systemd, is refused cleanly): service-mode install, the client passing the reader's
   verification, refusals of other programs and users, reader restart and
   reconnect, uninstall, direct mode, and switching between the modes.
+- NixOS: the installer offers direct mode (works immediately) or the module
+  instead of refusing; the module has `services.heptix.allowUids` for headless
+  machines and a NixOS VM test (`nix build .#checks.x86_64-linux.nixos-module`).
+- The reader's install-integrity check accepts sticky directories such as
+  `/nix/store` (root:nixbld, mode 1775), where entries can only be replaced by
+  their owners; every component on the path must still be root's.
 - The `sysusers.d` entry also creates the `input` group when a minimal system
   lacks it (the reader unit failed to start without it).
 - The editor's tab bar shows how the service gets its input: reader service

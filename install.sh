@@ -311,18 +311,59 @@ if [ "$UNINSTALL" = 1 ]; then
   exit 0
 fi
 
-if [ -e /etc/NIXOS ] && [ "$MODE" != direct ]; then
+nixos_module_help() {
   cat <<'EOF'
-On NixOS, install the reader service through the flake's module instead:
+
+On NixOS the reader service is installed through the flake's module (a script
+cannot change a declarative system). Add this to your configuration and rebuild:
 
   inputs.heptix.url = "github:mustakimali/heptix";
   # in your configuration:
   imports = [ inputs.heptix.nixosModules.default ];
   services.heptix.enable = true;
 
-(Or run this script with --direct, which needs the 'input' group and is not recommended.)
+(On a machine without a graphical session, add services.heptix.allowUids = [ 1000 ];
+with your user id.) Then remove any per-user install with: install.sh --uninstall
 EOF
-  exit 1
+}
+
+if [ -e /etc/NIXOS ]; then
+  case "$MODE" in
+    service)
+      warn "Service mode cannot be installed by this script on NixOS."
+      nixos_module_help
+      exit 1
+      ;;
+    direct) ;;
+    *)
+      if [ "$ASSUME_YES" = 1 ] || ! have_tty; then
+        warn "NixOS: the reader service needs the NixOS module, so installing in direct mode for now."
+        MODE=direct
+      else
+        cat >/dev/tty <<'EOF'
+
+This is NixOS, where a script cannot install the reader service. How should
+heptix read your keyboard and touchpad?
+
+  1) Direct mode (works now; not recommended)
+     heptix reads /dev/input itself, which needs the 'input' group. Then ANY
+     program you run can read all keyboard input on this machine, including
+     what is typed at the login and lock screens.
+
+  2) NixOS module (recommended)
+     Add heptix to your NixOS configuration; it sets up the reader service, and
+     you are not added to the 'input' group. Shows what to add.
+
+EOF
+        printf 'Choose [1]: ' >/dev/tty
+        read -r ans </dev/tty || ans=1
+        case "$ans" in
+          2) nixos_module_help; exit 0 ;;
+          *) MODE=direct ;;
+        esac
+      fi
+      ;;
+  esac
 fi
 
 choose_mode
