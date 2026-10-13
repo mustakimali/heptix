@@ -43,6 +43,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 - NixOS: the installer offers direct mode (works immediately) or the module
   instead of refusing; the module has `services.heptix.allowUids` for headless
   machines and a NixOS VM test (`nix build .#checks.x86_64-linux.nixos-module`).
+- `install.sh` prompts work even if the terminal was left in raw mode by the
+  program that started it (a full-screen tool or shell integration): Enter used
+  to show as `^M` and never be accepted. The terminal is put into normal line
+  mode before each prompt and restored afterwards.
 - The reader's install-integrity check accepts sticky directories such as
   `/nix/store` (root:nixbld, mode 1775), where entries can only be replaced by
   their owners; every component on the path must still be root's.
