@@ -35,6 +35,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   and runs the installer, which asks for the mode (`MODE=service|direct` and
   `YES=1` skip the question); `make uninstall` removes either mode. A NixOS
   module (`services.heptix.enable`).
+- `tools/docker-test/run.sh` tests the installer end to end in a Debian container
+  running real systemd: service-mode install, the client passing the reader's
+  verification, refusals of other programs and users, reader restart and
+  reconnect, uninstall, direct mode, and switching between the modes.
+- The `sysusers.d` entry also creates the `input` group when a minimal system
+  lacks it (the reader unit failed to start without it).
 - The editor's tab bar shows how the service gets its input: reader service
   running, not running, or direct mode.
 - README: install modes, the trust model of the reader and what it does not
