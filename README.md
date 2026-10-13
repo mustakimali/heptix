@@ -213,7 +213,9 @@ make install              # build and install from source; asks which mode (see 
 in a Debian container running real systemd (see the script for how to build the
 musl binary it needs).
 
-Uninstall: `systemctl --user disable --now heptix; rm ~/.local/bin/heptix`
+Uninstall (either mode; your settings and stats are kept):
+`curl -fsSL https://raw.githubusercontent.com/mustakimali/heptix/main/install.sh | sh -s -- --uninstall`,
+or `make uninstall` from a checkout.
 
 Linux only. Releases are published automatically when `version` in
 `Cargo.toml` is bumped on the default branch.
