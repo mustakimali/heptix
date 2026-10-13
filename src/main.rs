@@ -14,12 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program; if not, see <https://www.gnu.org/licenses/>.
 
+mod client;
 mod config;
 mod devices;
 mod heatmap;
 mod keyboard;
 mod mouse;
+mod peer;
 mod player;
+mod proto;
+mod reader;
 mod sound;
 mod stats;
 mod sysvol;
@@ -44,7 +48,14 @@ Settings live in $XDG_CONFIG_HOME/heptix/config.toml (default ~/.config/heptix/c
 created on first use.
 
 OPTIONS:
-  --run               Run using the saved settings
+  --run               Run using the saved settings (reads input through the heptix reader
+                      service if it is installed, otherwise directly)
+  --client            Run, reading input only through the heptix reader service
+  --direct            Run, reading the input devices directly (needs the 'input' group;
+                      not recommended, see the README)
+  --reader            Run the reader service (installed as a system service, not by hand)
+  --reader-socket <P> Socket path (default /run/heptix/events.sock)
+  --reader-uid <UID>  Reader: the one user id served. Client: the user id the reader runs as
   --enabled <BOOL>    Master switch: false keeps heptix idle (no input read, no sound, no stats)
   --tui               Open the settings editor even with other options
   --config <PATH>     Use this config file
@@ -70,6 +81,13 @@ OPTIONS:
   -h, --help          Show this help
 ";
 
+/// Where input events come from; dropping it disconnects or stops the watchers.
+#[allow(dead_code)]
+enum Source {
+    Direct(devices::Handle),
+    Reader(client::Handle),
+}
+
 static STOP: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: libc::c_int) {
@@ -85,6 +103,11 @@ fn install_signal_handlers() {
 }
 
 struct Cli {
+    reader: bool,
+    client: bool,
+    direct: bool,
+    reader_socket: Option<PathBuf>,
+    reader_uid: Option<u32>,
     tui: bool,
     list: bool,
     preview: bool,
@@ -98,6 +121,11 @@ struct Cli {
 
 fn parse_args() -> Cli {
     let mut c = Cli {
+        reader: false,
+        client: false,
+        direct: false,
+        reader_socket: None,
+        reader_uid: None,
         tui: false,
         list: false,
         preview: false,
@@ -122,6 +150,17 @@ fn parse_args() -> Cli {
         match arg.as_str() {
             "--run" => {}
             "--tui" => c.tui = true,
+            "--reader" => c.reader = true,
+            "--client" => c.client = true,
+            "--direct" => c.direct = true,
+            "--reader-socket" => c.reader_socket = Some(value("--reader-socket").into()),
+            "--reader-uid" => {
+                let v = value("--reader-uid");
+                c.reader_uid = Some(v.parse().unwrap_or_else(|_| {
+                    eprintln!("--reader-uid needs a number");
+                    exit(2)
+                }));
+            }
             "--list" => c.list = true,
             "--preview" => c.preview = true,
             "--stats" => c.stats = true,
@@ -170,8 +209,52 @@ fn load_sound(spec: &str, volume: u32) -> Vec<u8> {
     })
 }
 
+/// The reader service: serves input events to the verified client and nothing else.
+fn run_reader(cli: &Cli) -> ! {
+    let socket = cli.reader_socket.clone().unwrap_or_else(|| client::DEFAULT_SOCKET.into());
+    let Some(uid) = cli.reader_uid else {
+        eprintln!("--reader needs --reader-uid <UID> (the one user served)");
+        exit(2)
+    };
+    let auth: Arc<dyn reader::Authorizer> = Arc::new(reader::AllowUid(uid));
+    let listener = reader::bind(&socket).unwrap_or_else(|e| {
+        eprintln!("cannot listen on {}: {e}", socket.display());
+        exit(1)
+    });
+    install_signal_handlers();
+    eprintln!("heptix reader listening on {}", socket.display());
+    let source: Arc<reader::Source> = Arc::new(|sub, tx| {
+        devices::start(
+            tx,
+            devices::Options {
+                only_touchpad: sub.only_touchpad,
+                keyboards: sub.keyboards,
+                mice: sub.mice,
+                max_ms: sub.max_ms as u64,
+                scroll_ticks: sub.scroll_ticks,
+                verbose: false,
+                hotplug: true,
+            },
+        )
+    });
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher_stop = Arc::clone(&stop);
+    thread::spawn(move || {
+        while !STOP.load(Ordering::Relaxed) {
+            thread::sleep(std::time::Duration::from_millis(200));
+        }
+        watcher_stop.store(true, Ordering::Relaxed);
+    });
+    reader::serve(listener, auth, source, stop);
+    let _ = std::fs::remove_file(&socket);
+    exit(0)
+}
+
 fn main() {
     let cli = parse_args();
+    if cli.reader {
+        run_reader(&cli);
+    }
     let (mut settings, notes) = Settings::load_or_create(&cli.config);
 
     if cli.tui {
@@ -284,13 +367,32 @@ fn main() {
     }
 
     let (tx, rx) = mpsc::channel::<devices::Msg>();
-    let attached = devices::start(tx, device_options);
-    if attached == 0 {
-        eprintln!(
-            "no input devices opened yet (waiting for hotplug). If you expected some, check that you \
-             are in the 'input' group; see README."
-        );
-    }
+    let socket = cli.reader_socket.clone().unwrap_or_else(|| client::DEFAULT_SOCKET.into());
+    // `--run` uses the reader service when it is installed, and reads the devices
+    // itself otherwise (the older setup); `--client` and `--direct` force one.
+    let use_reader = cli.client || (!cli.direct && socket.exists());
+    let _source = if use_reader {
+        Source::Reader(client::spawn(
+            client::Config { socket, expected_uid: cli.reader_uid },
+            proto::Subscribe {
+                keyboards: device_options.keyboards,
+                mice: device_options.mice,
+                max_ms: device_options.max_ms as u32,
+                scroll_ticks: device_options.scroll_ticks,
+                only_touchpad: device_options.only_touchpad.clone(),
+            },
+            tx,
+        ))
+    } else {
+        let handle = devices::start(tx, device_options);
+        if handle.attached == 0 {
+            eprintln!(
+                "no input devices opened yet (waiting for hotplug). If you expected some, check that you \
+                 are in the 'input' group, or install the reader service; see README."
+            );
+        }
+        Source::Direct(handle)
+    };
     install_signal_handlers();
     // Auto volume: keep heptix quiet when the system volume is high.
     let volume_watcher = settings.is_auto_volume().then(|| {

@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Reader/client split: `heptix --reader` reads the input devices (as a
+  dedicated user) and streams events over a unix socket to `heptix --client`,
+  which plays sounds, keeps stats and shows the editor. The reader opens
+  devices only while a client is connected and releases them when it leaves.
+  `--run` uses the reader when its socket exists and reads devices directly
+  otherwise; `--client` and `--direct` force one.
+
 ## [0.7.0] - 2026-10-13
 
 ### Changed
