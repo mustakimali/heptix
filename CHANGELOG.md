@@ -12,6 +12,16 @@ versions follow [Semantic Versioning](https://semver.org/).
   devices only while a client is connected and releases them when it leaves.
   `--run` uses the reader when its socket exists and reads devices directly
   otherwise; `--client` and `--direct` force one.
+- The reader serves only a verified client: started from the very same
+  root-owned heptix binary, by the user's `systemd --user` as `heptix.service`,
+  in the reader's user and PID namespaces, not being traced, with
+  `no_new_privs` set and non-dumpable. It serves only the user who owns the
+  active session on the seat (or those in `/etc/heptix/allow-uids` on headless
+  machines), re-checks the client every two seconds, and refuses to run from a
+  binary that is not root-owned. The client connects only to a socket served by
+  the `heptix` user in a root-owned directory.
+- The client process hardens itself (non-dumpable, `no_new_privs`, no core
+  dumps) and refuses to run while being traced.
 
 ## [0.7.0] - 2026-10-13
 
