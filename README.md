@@ -29,56 +29,109 @@ here use made-up data (see `tools/render_screenshots.py`).
 curl -fsSL https://raw.githubusercontent.com/mustakimali/heptix/main/install.sh | sh
 ```
 
-Installs the latest release to `~/.local/bin`, runs it as a systemd user
-service, and opens the settings editor. Needs systemd and an audio server
-(PipeWire, PulseAudio or ALSA). If no audio player (`pw-cat`, `paplay` or
-`aplay`) is installed, the script installs the one matching your sound server
-with `apt`, `dnf`, `pacman` or `zypper` (asks for sudo).
+The installer asks how heptix should read your keyboard and touchpad:
+
+1. **Service mode (default, recommended).** A small reader service runs as its
+   own `heptix` user (installed with `sudo`, once). It is the only thing that
+   opens the input devices, and it hands the events to your own heptix and
+   nobody else. You are **not** added to the `input` group, so your other
+   programs cannot read your keyboard. See Privacy for how this works.
+2. **Direct mode (not recommended).** heptix reads `/dev/input` itself, which
+   needs you in the `input` group. Then any program you run can read all
+   keyboard input on the machine, including what is typed at the login and lock
+   screens.
+
+Choose with `--service` or `--direct`, take the defaults with `--yes`, and
+remove everything with `--uninstall` (your settings and stats are kept). Needs
+systemd and an audio server (PipeWire, PulseAudio or ALSA). If no audio player
+(`pw-cat`, `paplay` or `aplay`) is installed, the script installs the one
+matching your sound server with `apt`, `dnf`, `pacman` or `zypper`.
 
 **From source** (needs a Rust toolchain):
 
 ```sh
 git clone https://github.com/mustakimali/heptix
 cd heptix
-make install
+make install-service      # recommended: reader service + your user service (sudo)
+# or: make install        # direct mode, not recommended (input group)
 ```
 
-Builds and installs to `~/.local/bin` and starts the systemd user service.
-Pass options with `make install ARGS="--keyboard-sound thock --volume 80"`.
+Pass options in direct mode with `make install ARGS="--keyboard-sound thock --volume 80"`.
 
-Reading the touchpad needs the `input` group. The script adds you with `sudo`
-(log out and in afterwards). On NixOS add `"input"` to
-`users.users.<you>.extraGroups` instead.
+**NixOS:** use the flake's module (the install script points you here):
+
+```nix
+imports = [ inputs.heptix.nixosModules.default ];
+services.heptix.enable = true;
+```
+
+(The module has been evaluated but not yet run on a real NixOS system.)
 
 ## Dependencies
 
 The release binary is a single static file with all sounds built in. At runtime
 it needs:
 
-- Linux with systemd (for the background service).
+- Linux with systemd (for the background services).
 - An audio player on `PATH`: `pw-cat` (PipeWire), `paplay` (PulseAudio) or
   `aplay` (ALSA). The installer adds one if missing.
-- Membership in the `input` group, to read `/dev/input/event*`.
+- Service mode: `sudo` once, to install the reader service and create the
+  `heptix` user. Direct mode: membership in the `input` group instead.
 
 Building from source also needs a Rust toolchain.
 
 ## Privacy
 
-**heptix cannot send your data anywhere.** The background service runs in
-lockdown mode: systemd blocks all network access for it
-(`RestrictAddressFamilies=AF_UNIX`, `IPAddressDeny=any`, `NoNewPrivileges=yes`
-in the unit file). It cannot open an IPv4 or IPv6 socket at all, only local
-unix sockets such as your audio server. So there are no analytics, no crash
-reports, no update checks and no phoning home, and the code has no networking
-dependencies to begin with. (A copy you start by hand, such as the settings
-editor, is not under the unit's restrictions, but it contains no network code
-either.)
+### Who can read what you type
 
-What heptix records, because activity stats are on by default:
+- **Service mode (default).** The reader service runs as the `heptix` user in
+  the `input` group, with no network access at all (a private network
+  namespace), no audio, a read-only system, filtered system calls and access to
+  the input devices only. Your own programs are not in the `input` group, so
+  they cannot open the devices. The only route to your keystrokes is the
+  reader's unix socket, and the reader refuses everyone except your heptix:
+  - it serves only the user who owns the active session on the seat (on
+    machines without one, only users listed in `/etc/heptix/allow-uids`);
+  - the client must have been started from the very same root-owned heptix
+    binary, by your own `systemd --user` as `heptix.service`, in the same user
+    and PID namespaces, must not be traced, and must have hardened itself
+    (non-dumpable, `no_new_privs`);
+  - this is re-checked every two seconds, and anything else is closed before a
+    byte is sent. The reader also refuses to run from a binary that is not
+    root-owned, and the client only trusts a socket served by the `heptix` user
+    in a root-owned directory.
+  - The reader opens devices only while your heptix is connected and asks for
+    them, so with `enabled = false` nothing at all is read.
+- **Direct mode (not recommended).** heptix opens the devices itself, so your
+  user is in the `input` group, and any program you run can read all keyboard
+  input on the machine.
 
-- **Counters only**: totals per hour (keystrokes, touchpad taps, clicks
-  from the touchpad or a mouse, scroll ticks from the touchpad or a mouse wheel, and how far your fingers travelled while scrolling), and how
-  often each key was pressed per day.
+What this does not stop: a compromise of the heptix process itself (it is
+hardened and checked, but none of that is a proof), kernel exploits and root.
+Audible clicks also reveal your typing rhythm to anything that can record your
+audio, and the stats file (counters only, below) is readable by your other
+programs.
+
+### No network
+
+**heptix cannot send your data anywhere.** The reader runs with no network at
+all, and the client service runs in lockdown mode too: systemd blocks all
+network access for it (`RestrictAddressFamilies=AF_UNIX`, `IPAddressDeny=any`,
+`NoNewPrivileges=yes` in the unit file). It cannot open an IPv4 or IPv6 socket
+at all, only local unix sockets such as your audio server and the reader. So
+there are no analytics, no crash reports, no update checks and no phoning home,
+and the code has no networking dependencies to begin with. (A copy you start by
+hand, such as the settings editor, is not under the unit's restrictions, but it
+contains no network code either.)
+
+### What heptix records
+
+Activity stats are on by default:
+
+- **Counters only**: totals per hour (keystrokes, touchpad taps, clicks from
+  the touchpad or a mouse, scroll ticks from the touchpad or a mouse wheel, and
+  how far your fingers travelled while scrolling), and how often each key was
+  pressed per day.
 - **Never**: which keys you pressed in what order, the time between keys, the
   text you typed, window titles or anything else. Counts can still show
   habits, such as when you are at the computer.
@@ -90,13 +143,17 @@ What heptix records, because activity stats are on by default:
 
 Keyboard and mouse sounds (also on by default) only react to a key or button
 going down or up, and to wheel notches, to pick a sound. Mouse movement events
-are read and discarded at once; nothing about them is kept. `--verbose` never prints key presses. Set `keyboard_sound = "off"`
-and `stats = false` and heptix stops reading keyboards altogether.
+are read and discarded at once; nothing about them is kept. `--verbose` never
+prints key presses. Set `keyboard_sound = "off"` and `stats = false` and heptix
+stops reading keyboards altogether.
 
 ## Use
 
 - `heptix` opens the settings editor (sound, volumes, tap length, scroll
   density; changes preview as you make them, `s` saves and restarts the service).
+- The tab bar shows how the background service gets its input: "reader service
+  running" (service mode), a warning if it is not running, or "direct mode
+  (input group)".
 - The Settings view groups related options under **Sounds**, **Volume**,
   **Touchpad** and **Activity** headers (`Enter` or `←/→` on a header folds it),
   with a short explanation of the selected item underneath. In auto volume mode
@@ -110,8 +167,9 @@ and `stats = false` and heptix stops reading keyboards altogether.
   switch). Under the Activity heatmap a table gives keys, taps, clicks, scroll
   ticks and scroll distance for the selected day, today, this week, this month
   and all time. `heptix --stats` prints a text summary with the same table. See Privacy for what is stored.
-- `heptix --run` runs with the saved settings; other options override them
-  (`heptix --help`).
+- `heptix --run` runs with the saved settings, reading input through the reader
+  service when it is installed and directly otherwise; `--client` and `--direct`
+  force one. Other options override the saved settings (`heptix --help`).
 - Settings: `~/.config/heptix/config.toml` (created on first run). `enabled` at
   the top is a master switch: set it to `false` (or turn off **Enabled**, the
   first row in the editor) and heptix goes idle. It reads no input, plays
