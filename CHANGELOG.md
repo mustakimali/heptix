@@ -5,7 +5,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-10-14
+## [0.9.1] - 2026-10-14
 
 ### Added
 - `heptix --info` shows the version, revision and build date, the file and socket
