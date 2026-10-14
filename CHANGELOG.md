@@ -12,10 +12,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   rewritten about once a day, `stats.live.tsv` holds recent days and the
   all-time totals and is the only file written on the usual save. A save used to
   rewrite everything, which grows with the history; now it stays a few KB. An
-  existing `stats.tsv` is split automatically on the first save, with a one-time
-  copy kept as `stats.tsv.bak`. Going back to 0.8.x afterwards loses the recent
+  existing `stats.tsv` is split automatically on the first save, after a
+  verified copy is made as `stats.tsv.bak` (the next free `.bak.N` if an older
+  backup is there); if the copy cannot be made, nothing is saved and the file
+  stays as it is. Going back to 0.8.x afterwards loses the recent
   days and the totals; restore the copy. `--stats-reset` and the Activity view's
-  wipe remove both files and the copy.
+  wipe remove both files and the copies.
 
 ## [0.8.1] - 2026-10-14
 
