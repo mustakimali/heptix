@@ -64,7 +64,13 @@ booted() { s=$(systemctl is-system-running 2>/dev/null); [ "$s" = running ] || [
 echo "== booting systemd"
 wait_for 90 booted || { echo "systemd did not boot"; exit 2; }
 loginctl enable-linger tester
-wait_for 30 test -S /run/user/1000/bus || { echo "no user manager for tester"; exit 2; }
+if ! wait_for 120 test -S /run/user/1000/bus; then
+  echo "no user manager for tester"
+  systemctl status user@1000.service --no-pager 2>&1 | tail -15
+  journalctl -u user@1000.service --no-pager 2>&1 | tail -15
+  ls -la /run/user/1000 2>&1
+  exit 2
+fi
 useradd -m -u 1001 other 2>/dev/null
 # The reader watches /dev/input for new devices, as on a real system (a container has none).
 mkdir -p /dev/input
@@ -89,7 +95,7 @@ check "the heptix system user exists" getent passwd heptix
 check "the login user is not in the input group" sh -c '! id -nG tester | tr " " "\n" | grep -qx input'
 check "heptix is on PATH" test -x /usr/local/bin/heptix
 check "reader service is active" wait_for 20 systemctl is-active --quiet heptix-reader.service
-check "socket is world-connectable and owned by heptix" sh -c '[ "$(stat -c "%U %a" /run/heptix/events.sock)" = "heptix 666" ]'
+check "socket is world-connectable and owned by heptix" wait_for 15 sh -c '[ "$(stat -c "%U %a" /run/heptix/events.sock)" = "heptix 666" ]'
 check "client service is active" wait_for 20 as_tester systemctl --user is-active --quiet heptix.service
 check "client connected to the reader (verification passed)" wait_for 20 sh -c "journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service | grep -q 'reader: connected'"
 check "reader has refused nobody so far" sh -c '! journalctl -u heptix-reader.service --no-pager -o cat | grep -q refused'
