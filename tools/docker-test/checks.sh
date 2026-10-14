@@ -63,8 +63,9 @@ five_presses_counted() {
   echo "stats file:"; cat "$stats" 2>&1
   echo "client log:"; journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service 2>&1 | tail -8
   echo "reader log:"; journalctl -u heptix-reader.service --no-pager -o cat 2>&1 | tail -12
+  echo "reader process fds on input:"
   # shellcheck disable=SC2010
-  echo "reader process fds on input:"; ls -l "/proc/$(reader_pid)/fd" 2>&1 | grep -c event
+  ls -l "/proc/$(reader_pid)/fd" 2>&1 | grep -c event
   return 1
 }
 # Runs a command with its output in <log>; shows the end of the log if it fails.
