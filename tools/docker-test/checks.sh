@@ -66,14 +66,23 @@ wait_for 90 booted || { echo "systemd did not boot"; exit 2; }
 loginctl enable-linger tester
 wait_for 30 test -S /run/user/1000/bus || { echo "no user manager for tester"; exit 2; }
 useradd -m -u 1001 other 2>/dev/null
+# The reader watches /dev/input for new devices, as on a real system (a container has none).
+mkdir -p /dev/input
+# A checkout like the one `git clone` leaves, with the binary already built, so that the
+# real `make install` target runs (CARGO=true skips the build).
+mkdir -p /home/tester/repo/target/release
+cp /stage/Makefile /stage/install.sh /home/tester/repo/
+cp -r /stage/packaging /home/tester/repo/packaging
+cp /stage/heptix /home/tester/repo/target/release/heptix
+chown -R tester /home/tester/repo
 # A container has no seat; serve the test user the way a headless machine would.
 mkdir -p /etc/heptix
 echo 1000 >/etc/heptix/allow-uids
 
 # --- service mode -----------------------------------------------------------
-echo "== service mode install"
-as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --service --yes >/tmp/install-service.log 2>&1
-check "installer exits cleanly" test $? -eq 0
+echo "== service mode install (make install MODE=service)"
+as_tester sh -c 'cd /home/tester/repo && make install MODE=service YES=1 CARGO=true' >/tmp/install-service.log 2>&1
+check "make install exits cleanly" test $? -eq 0
 check "binary is installed root-owned in /usr/lib/heptix" sh -c '[ "$(stat -c "%U %a" /usr/lib/heptix/heptix)" = "root 755" ]'
 check "unit files are installed" sh -c 'test -f /etc/systemd/system/heptix-reader.service && test -f /etc/systemd/user/heptix.service'
 check "the heptix system user exists" getent passwd heptix
@@ -98,6 +107,37 @@ echo "== client process"
 CP=$(client_pid)
 check "client is non-dumpable (its /proc entries are root-owned)" sh -c "[ \"\$(stat -c %U /proc/$CP/environ)\" = root ]"
 check "client has no_new_privs" sh -c "grep -q '^NoNewPrivs:.1' /proc/$CP/status"
+
+echo "== events end to end (a virtual keyboard through the reader to the client)"
+if [ -c /dev/uinput ]; then
+  mkfifo /tmp/uinput.fifo
+  python3 /stage/uinput_key.py heptix-test-keyboard </tmp/uinput.fifo >/tmp/uinput.out 2>/tmp/uinput.err &
+  UPID=$!
+  exec 3>/tmp/uinput.fifo
+  wait_for 10 test -s /tmp/uinput.out
+  EV=$(head -1 /tmp/uinput.out)
+  check "a virtual keyboard was created" test -n "$EV"
+  # No udev in a container: make the device node the way udev would (input group, 660).
+  mknod "/dev/input/event$EV" c 13 $((64 + EV)) && chgrp input "/dev/input/event$EV" && chmod 660 "/dev/input/event$EV"
+  check "the reader picked up the new device through hotplug" wait_for 20 sh -c "journalctl -u heptix-reader.service --no-pager -o cat | grep -q 'watching /dev/input/event$EV (heptix-test-keyboard) as keyboard'"
+  check "the reader holds the device while the client is connected" sh -c "ls -l /proc/$(reader_pid)/fd | grep -q event$EV"
+  echo "press 5" >&3
+  check "the keyboard sent its key presses" wait_for 15 grep -q pressed /tmp/uinput.out
+  # Restarting the client makes it flush its stats (it does on SIGTERM).
+  as_tester systemctl --user restart heptix.service
+  check "the five key presses reached the client and its stats" wait_for 15 sh -c "grep -qE '^k [0-9-]+ 194 5$' /home/tester/.local/state/heptix/stats.tsv"
+  as_tester systemctl --user stop heptix.service
+  check "the reader releases the device when the client stops" wait_for 15 sh -c "! ls -l /proc/$(reader_pid)/fd | grep -q event$EV"
+  as_tester systemctl --user start heptix.service
+  check "the client is back and connected" wait_for 20 sh -c "journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service | grep -c 'reader: connected' | grep -qv '^0$'"
+  echo quit >&3
+  exec 3>&-
+  wait "$UPID" 2>/dev/null
+  rm -f "/dev/input/event$EV"
+else
+  echo "skip - no /dev/uinput here, so input events are not tested end to end"
+  echo "::warning::no /dev/uinput in the test container: input events were not tested end to end"
+fi
 
 echo "== refusals"
 cat >/tmp/probe.py <<'PYEND'
@@ -125,16 +165,16 @@ BEFORE=$(client_log | grep -c 'reader: connected')
 systemctl restart heptix-reader.service
 check "the client reconnects after the reader restarts" wait_for 30 sh -c "[ \$(journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service | grep -c 'reader: connected') -gt $BEFORE ]"
 
-echo "== uninstall"
-as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --uninstall >/tmp/uninstall.log 2>&1
-check "uninstall exits cleanly" test $? -eq 0
+echo "== uninstall (make uninstall)"
+as_tester sh -c 'cd /home/tester/repo && make uninstall' >/tmp/uninstall.log 2>&1
+check "make uninstall exits cleanly" test $? -eq 0
 check "system files are gone" sh -c '! test -e /usr/lib/heptix/heptix && ! test -e /etc/systemd/system/heptix-reader.service && ! test -e /etc/systemd/user/heptix.service && ! test -e /usr/local/bin/heptix'
 check "reader service is stopped" sh -c '! systemctl is-active --quiet heptix-reader.service'
 
 # --- direct mode ------------------------------------------------------------
-echo "== direct mode install"
-as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --direct --yes >/tmp/install-direct.log 2>&1
-check "installer exits cleanly" test $? -eq 0
+echo "== direct mode install (make install MODE=direct)"
+as_tester sh -c 'cd /home/tester/repo && make install MODE=direct YES=1 CARGO=true' >/tmp/install-direct.log 2>&1
+check "make install exits cleanly" test $? -eq 0
 check "binary is in ~/.local/bin" test -x /home/tester/.local/bin/heptix
 check "user unit runs in explicit direct mode" grep -q -- '--direct' /home/tester/.config/systemd/user/heptix.service
 check "the installer warned that direct mode is not recommended" grep -q 'not recommended' /tmp/install-direct.log

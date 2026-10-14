@@ -49,7 +49,7 @@ stage=$(mktemp -d)
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$stage"' EXIT
 cp "$BIN" "$stage/heptix"
 cp -r "$ROOT/packaging" "$stage/packaging"
-cp "$ROOT/install.sh" "$HERE/checks.sh" "$stage/"
+cp "$ROOT/install.sh" "$ROOT/Makefile" "$HERE/checks.sh" "$HERE/uinput_key.py" "$stage/"
 chmod -R a+rX "$stage"
 
 if [ "$DISTRO" = alpine ]; then
@@ -66,9 +66,16 @@ fi
 
 docker build -q --build-arg BASE="$BASE" -t "$IMAGE" "$HERE" >/dev/null
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-docker run -d --name "$NAME" --cgroupns=host \
-  --cap-add SYS_ADMIN --cap-add SYS_PTRACE --cap-add NET_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+
+set -- --cgroupns=host \
+  --cap-add SYS_ADMIN --cap-add SYS_PTRACE --cap-add NET_ADMIN \
+  --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
   --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
-  -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$stage":/stage:ro \
-  "$IMAGE" >/dev/null
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$stage":/stage:ro
+# A virtual keyboard (/dev/uinput) lets the checks send real input events through
+# the reader. It only ever presses F24. Set HEPTIX_NO_UINPUT=1 to skip it.
+if [ -e /dev/uinput ] && [ -z "${HEPTIX_NO_UINPUT:-}" ]; then
+  set -- "$@" --device /dev/uinput --device-cgroup-rule 'c 13:* rmw'
+fi
+docker run -d --name "$NAME" "$@" "$IMAGE" >/dev/null
 docker exec "$NAME" sh /stage/checks.sh
