@@ -34,6 +34,12 @@ else
   echo "no supported package manager" >&2
   exit 1
 fi
+# pam_loginuid writes /proc/self/loginuid, which a kernel with auditing refuses inside a
+# container (no CAP_AUDIT_CONTROL), and then systemd cannot start the user manager.
+# Make it optional, as container images commonly do.
+for f in /etc/pam.d/*; do
+  [ -f "$f" ] && sed -i -E 's/^(session[[:space:]]+)required([[:space:]]+pam_loginuid\.so)/\1optional\2/' "$f"
+done
 useradd -m -u 1000 -s /bin/bash tester
 mkdir -p /etc/sudoers.d
 echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester

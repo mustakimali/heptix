@@ -69,6 +69,15 @@ if ! wait_for 120 test -S /run/user/1000/bus; then
   systemctl status user@1000.service --no-pager 2>&1 | tail -15
   journalctl -u user@1000.service --no-pager 2>&1 | tail -15
   ls -la /run/user/1000 2>&1
+  echo "--- pam_loginuid:"; grep -rn pam_loginuid /etc/pam.d /usr/lib/pam.d 2>&1 | head -5
+  echo "--- loginuid:"; cat /proc/self/loginuid 2>&1
+  echo "--- the user and its helper:"
+  getent passwd tester 2>&1; getent shadow tester 2>&1 | cut -c1-30
+  ls -l /usr/sbin/unix_chkpwd /sbin/unix_chkpwd 2>&1
+  grep -E '^(passwd|shadow|group):' /etc/nsswitch.conf 2>&1
+  echo "--- the user manager's pam stack:"; cat /etc/pam.d/systemd-user /usr/lib/pam.d/systemd-user 2>&1 | head -12
+  echo "--- limits:"; grep -E '^(NoNewPrivs|CapEff|CapBnd|Seccomp):' /proc/self/status
+  echo "--- audit/pam messages:"; journalctl -b --no-pager 2>&1 | grep -iE 'pam|chkpwd|audit|EPERM' | tail -12
   exit 2
 fi
 useradd -m -u 1001 other 2>/dev/null
