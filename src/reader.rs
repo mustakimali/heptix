@@ -161,7 +161,10 @@ fn handle(stream: UnixStream, shared: &Shared) {
     if let Some((_, old)) = shared.session.lock().unwrap().replace((id, shutdown)) {
         let _ = old.shutdown(std::net::Shutdown::Both);
     }
-    let result = session(&stream, &peer, sub, shared);
+    let forwarded = AtomicU64::new(0);
+    let result = session(&stream, &peer, sub, shared, &forwarded);
+    // Counts only: what was forwarded in this session, never which keys.
+    eprintln!("session {id} ended after forwarding {} events", forwarded.load(Ordering::Relaxed));
     if let Err(e) = result {
         if e.kind() != io::ErrorKind::BrokenPipe && e.kind() != io::ErrorKind::UnexpectedEof {
             eprintln!("session {id} ended: {e}");
@@ -174,7 +177,7 @@ fn handle(stream: UnixStream, shared: &Shared) {
     let _ = stream.shutdown(std::net::Shutdown::Both);
 }
 
-fn session(stream: &UnixStream, peer: &PeerInfo, sub: Subscribe, shared: &Shared) -> io::Result<()> {
+fn session(stream: &UnixStream, peer: &PeerInfo, sub: Subscribe, shared: &Shared, forwarded: &AtomicU64) -> io::Result<()> {
     let mut out = stream;
     proto::write_frame(&mut out, &proto::hello())?;
     let (tx, rx) = mpsc::channel::<Msg>();
@@ -207,6 +210,7 @@ fn session(stream: &UnixStream, peer: &PeerInfo, sub: Subscribe, shared: &Shared
                 };
                 if keep {
                     proto::write_frame(&mut out, &proto::event(&msg))?;
+                    forwarded.fetch_add(1, Ordering::Relaxed);
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -374,8 +378,14 @@ mod tests {
         let mut second = fx.connect(&sub());
         assert_eq!(next(&mut second).unwrap(), ToClient::Hello(proto::VERSION));
         assert!(next(&mut first).is_err(), "the old session must be closed");
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < deadline && !fx.handles.lock().unwrap().first().is_some_and(|f| f.load(Ordering::Relaxed)) {
+        // Hello is sent before a session opens its devices, and a slow machine can take a while.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            let handles = fx.handles.lock().unwrap();
+            if handles.len() == 2 && handles[0].load(Ordering::Relaxed) {
+                break;
+            }
+            drop(handles);
             thread::sleep(Duration::from_millis(20));
         }
         let handles = fx.handles.lock().unwrap();

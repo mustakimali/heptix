@@ -133,7 +133,8 @@ fn session(cfg: &Config, sub: &Subscribe, tx: &Sender<Msg>, stop: &AtomicBool) -
         let n = match stream.read(&mut chunk) {
             Ok(0) => return if greeted { Ok(()) } else { Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the reader refused the connection")) },
             Ok(n) => n,
-            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => continue,
+            // A timeout, or a signal handler that ran while we waited: just wait again.
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => continue,
             Err(e) => return Err(if greeted { e } else { refused(e) }),
         };
         buf.push(&chunk[..n]);

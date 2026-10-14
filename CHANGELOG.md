@@ -23,6 +23,10 @@ versions follow [Semantic Versioning](https://semver.org/).
   remapper exposing a keyboard twice); repeats from one device always count.
   Found by the new end-to-end CI test, which counted 2 of 5 key presses on a
   loaded runner.
+- The client no longer drops the connection to the reader when a signal
+  interrupts a read; it waits again instead of reconnecting and losing the
+  events in flight. On shutdown it also processes events that already arrived
+  before writing the final stats.
 
 ## [0.8.0] - 2026-10-14
 

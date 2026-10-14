@@ -444,10 +444,17 @@ fn main() {
     let mut mouse_filter = mouse::Filter::default();
     let mut store = stats_on.then(|| stats::Store::open(stats::default_path()));
     let per_key = settings.stats_keys;
-    // Runs until SIGTERM/SIGINT; devices come and go underneath (hotplug).
+    // Runs until SIGTERM/SIGINT; devices come and go underneath (hotplug). On the signal it
+    // keeps going until the events that already arrived are processed (a quiet moment, or
+    // two seconds at most), so they are in the stats the final flush writes.
+    let mut stopping: Option<std::time::Instant> = None;
+    let (mut events_seen, mut key_presses_seen) = (0u64, 0u64);
     loop {
-        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+        let wait = if stopping.is_some() { 150 } else { 500 };
+        match rx.recv_timeout(std::time::Duration::from_millis(wait)) {
             Ok(msg) => {
+                events_seen += 1;
+                key_presses_seen += matches!(msg, devices::Msg::Key(ev) if ev.down) as u64;
                 if let Some(w) = &volume_watcher {
                     w.touch();
                 }
@@ -508,6 +515,7 @@ fn main() {
                     }
                 }
             }
+            Err(mpsc::RecvTimeoutError::Timeout) if stopping.is_some() => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -515,10 +523,15 @@ fn main() {
             s.flush(false);
         }
         if STOP.load(Ordering::Relaxed) {
-            break;
+            let since = *stopping.get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() > std::time::Duration::from_secs(2) {
+                break;
+            }
         }
     }
     if let Some(s) = store.as_mut() {
         s.flush(true);
     }
+    // Counts only, never which keys.
+    eprintln!("stopping after {events_seen} events ({key_presses_seen} key presses)");
 }
