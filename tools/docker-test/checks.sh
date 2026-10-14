@@ -59,9 +59,11 @@ wait_for() {
 five_presses_counted() {
   stats=/home/tester/.local/state/heptix/stats.tsv
   wait_for 20 grep -qE '^k [0-9-]+ 194 5$' "$stats" && return 0
+  echo "an independent reader of the device saw (presses, dropped): $(cat /tmp/evcount.out 2>&1)"
   echo "stats file:"; cat "$stats" 2>&1
   echo "client log:"; journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service 2>&1 | tail -8
-  echo "reader log:"; journalctl -u heptix-reader.service --no-pager -o cat 2>&1 | tail -8
+  echo "reader log:"; journalctl -u heptix-reader.service --no-pager -o cat 2>&1 | tail -12
+  echo "reader process fds on input:"; ls -l "/proc/$(reader_pid)/fd" 2>&1 | grep -c event
   return 1
 }
 # Runs a command with its output in <log>; shows the end of the log if it fails.
@@ -154,6 +156,9 @@ if [ -c /dev/uinput ]; then
   mknod "/dev/input/event$EV" c 13 $((64 + EV)) && chgrp input "/dev/input/event$EV" && chmod 660 "/dev/input/event$EV"
   check "the reader picked up the new device through hotplug" wait_for 20 sh -c "journalctl -u heptix-reader.service --no-pager -o cat | grep -q 'watching /dev/input/event$EV (heptix-test-keyboard) as keyboard'"
   check "the reader holds the device while the client is connected" sh -c "ls -l /proc/$(reader_pid)/fd | grep -q event$EV"
+  # An independent reader of the same device, to tell a loss inside heptix from one outside it.
+  python3 /stage/evcount.py "/dev/input/event$EV" 194 6 >/tmp/evcount.out 2>&1 &
+  sleep 1
   echo "press 5" >&3
   check "the keyboard sent its key presses" wait_for 15 grep -q pressed /tmp/uinput.out
   # Restarting the client makes it flush its stats (it does on SIGTERM).
