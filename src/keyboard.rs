@@ -397,6 +397,12 @@ impl Keyboard {
         Ok(Keyboard { pack: None, press, release, volume: volume as f32 / 100.0, rng: Rng::seeded(), last: None })
     }
 
+    /// The recorded press sample for a key (bucklespring), for loudness tests.
+    #[cfg(test)]
+    pub(crate) fn recorded_press(&self, code: u16) -> Option<Arc<Vec<u8>>> {
+        self.pack.as_ref()?.press.get(&code).cloned()
+    }
+
     pub fn handle(&mut self, ev: KeyEvent, player: &Player) {
         let now = Instant::now();
         if let Some((code, down, at)) = self.last {

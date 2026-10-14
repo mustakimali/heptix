@@ -23,7 +23,10 @@ use std::path::{Path, PathBuf};
 pub const AUTO_TAP_VOLUME: u32 = 55;
 pub const AUTO_SCROLL_VOLUME: u32 = 45;
 pub const AUTO_KEYBOARD_VOLUME: u32 = 40;
-pub const AUTO_MOUSE_VOLUME: u32 = 50;
+/// Chosen by loudness, not by peak: the recorded click is a sharp 2-6 kHz transient, which
+/// sounds much louder than a low thud with the same peak. At 25 it sits between the touchpad
+/// tap and a keyboard click (see the `mouse_clicks_sit_between_a_tap_and_a_key_click` test).
+pub const AUTO_MOUSE_VOLUME: u32 = 25;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
