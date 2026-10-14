@@ -170,6 +170,11 @@ stops reading keyboards altogether.
   installed and directly otherwise; `--client` and `--direct` force one. Other
   options override saved settings (`heptix --help`). `heptix --list` shows the
   detected devices; keyboards and mice plugged in later are picked up.
+- `heptix --info` shows the version, revision and build date, the running mode
+  (service or direct), the state of the client and reader services, the socket
+  (path, owner, connected clients), the settings and stats files, and a status
+  line that points out what is wrong, if anything. It only reads: it creates
+  nothing and never connects to the reader.
 - Settings live in `~/.config/heptix/config.toml`. `enabled = false` is a master
   switch: heptix reads, plays and records nothing until you turn it back on.
 

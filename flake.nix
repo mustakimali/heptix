@@ -30,6 +30,11 @@
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
+          # For `heptix --info`: a Nix build has no git checkout and a fixed clock.
+          HEPTIX_REV = self.shortRev or self.dirtyShortRev or "unknown";
+          HEPTIX_BUILD_DATE =
+            let d = self.lastModifiedDate or "19700101";
+            in "${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
           nativeBuildInputs = [ pkgs.makeWrapper ];
           # Audio sinks are found on PATH at runtime; add pipewire as a default.
           postInstall = ''

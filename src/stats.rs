@@ -169,7 +169,7 @@ pub fn weekday(day: i32) -> usize {
     (day + 3).rem_euclid(7) as usize
 }
 
-fn date_string(day: i32) -> String {
+pub fn date_string(day: i32) -> String {
     let (y, m, d) = civil_from_days(day);
     format!("{y:04}-{m:02}-{d:02}")
 }
@@ -434,11 +434,16 @@ pub fn live_path(path: &Path) -> PathBuf {
 }
 
 /// Where copies of an old single-file `stats.tsv` are kept: `stats.tsv.bak`, then `.bak.1`, ...
-fn backup_paths(path: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+pub fn backup_paths(path: &Path) -> impl Iterator<Item = PathBuf> + '_ {
     (0..20).map(|n| match n {
         0 => path.with_extension("tsv.bak"),
         n => path.with_extension(format!("tsv.bak.{n}")),
     })
+}
+
+/// The copies of an old single-file stats.tsv that exist.
+pub fn backups(path: &Path) -> Vec<PathBuf> {
+    backup_paths(path).filter(|p| p.exists()).collect()
 }
 
 /// True when `path` is an old single stats.tsv: it has no live file next to it yet.
