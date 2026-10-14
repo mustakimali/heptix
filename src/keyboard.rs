@@ -39,7 +39,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 /// Recorded IBM Model M samples embedded in the binary (see `assets/README.md`).
 pub const RECORDED: &str = "bucklespring";
@@ -362,9 +362,6 @@ pub struct Keyboard {
     release: Vec<Vec<Arc<Vec<u8>>>>,
     volume: f32,
     rng: Rng,
-    /// The previous event's code, direction and time, to drop duplicates when
-    /// a remapper exposes the same keyboard twice.
-    last: Option<(u16, bool, Instant)>,
 }
 
 impl Keyboard {
@@ -372,7 +369,7 @@ impl Keyboard {
         if profile == RECORDED || profile.contains('/') {
             let pack = if profile == RECORDED { embedded_pack() } else { load_pack(profile)? };
             let (press, release) = (Vec::new(), Vec::new());
-            return Ok(Keyboard { pack: Some(pack), press, release, volume: volume as f32 / 100.0, rng: Rng::seeded(), last: None });
+            return Ok(Keyboard { pack: Some(pack), press, release, volume: volume as f32 / 100.0, rng: Rng::seeded() });
         }
         let p = match profile {
             "thock" => &THOCK,
@@ -394,7 +391,7 @@ impl Keyboard {
         };
         let press = bank(p.press, p.press_ms, true, 1.0);
         let release = bank(p.release, p.release_ms, false, p.release_level);
-        Ok(Keyboard { pack: None, press, release, volume: volume as f32 / 100.0, rng: Rng::seeded(), last: None })
+        Ok(Keyboard { pack: None, press, release, volume: volume as f32 / 100.0, rng: Rng::seeded() })
     }
 
     /// The recorded press sample for a key (bucklespring), for loudness tests.
@@ -404,13 +401,6 @@ impl Keyboard {
     }
 
     pub fn handle(&mut self, ev: KeyEvent, player: &Player) {
-        let now = Instant::now();
-        if let Some((code, down, at)) = self.last {
-            if code == ev.code && down == ev.down && now.duration_since(at) < Duration::from_millis(8) {
-                return;
-            }
-        }
-        self.last = Some((ev.code, ev.down, now));
         let (pcm, rate) = match &self.pack {
             Some(pack) => {
                 let map = if ev.down { &pack.press } else { &pack.release };

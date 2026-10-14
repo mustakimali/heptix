@@ -15,6 +15,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   one volume means one loudness across the mouse sounds. Saved `mouse_volume`
   values are not changed.
 
+### Fixed
+- Key presses of one key that reached heptix together (a busy machine can delay
+  the reader a little) were collapsed into one in the stats and the sounds,
+  because any repeat within 8 ms was treated as a duplicate device. Duplicates
+  are now dropped only when two *different* devices report the same event (a
+  remapper exposing a keyboard twice); repeats from one device always count.
+  Found by the new end-to-end CI test, which counted 2 of 5 key presses on a
+  loaded runner.
+
 ## [0.8.0] - 2026-10-14
 
 ### Added

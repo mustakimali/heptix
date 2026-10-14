@@ -22,7 +22,6 @@
 //! by an `Authorizer`; everything else is refused before a byte is sent.
 
 use crate::devices::{self, Msg};
-use crate::keyboard::KeyEvent;
 use crate::mouse;
 use crate::peer::{self, PeerInfo};
 use crate::proto::{self, Subscribe};
@@ -42,8 +41,6 @@ const HANDSHAKE: Duration = Duration::from_secs(3);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 /// How often an established connection is re-checked.
 const RECHECK: Duration = Duration::from_secs(2);
-/// Same key and direction within this window is one event seen twice.
-const KEY_DUPLICATE: Duration = Duration::from_millis(8);
 
 /// Decides who is served.
 pub trait Authorizer: Send + Sync + 'static {
@@ -79,22 +76,6 @@ pub fn bind(path: &Path) -> io::Result<UnixListener> {
     let listener = UnixListener::bind(path)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
     Ok(listener)
-}
-
-/// Drops key events that arrive twice, as a remapper can make them.
-#[derive(Default)]
-struct KeyFilter {
-    last: Option<(u16, bool, Instant)>,
-}
-
-impl KeyFilter {
-    fn accept(&mut self, ev: KeyEvent, now: Instant) -> bool {
-        if self.last.is_some_and(|(c, d, t)| c == ev.code && d == ev.down && now.duration_since(t) < KEY_DUPLICATE) {
-            return false;
-        }
-        self.last = Some((ev.code, ev.down, now));
-        true
-    }
 }
 
 /// Counts refusals so a flood of connection attempts cannot flood the log.
@@ -212,14 +193,15 @@ fn session(stream: &UnixStream, peer: &PeerInfo, sub: Subscribe, shared: &Shared
         });
     }
 
-    let (mut keys, mut mouse_filter) = (KeyFilter::default(), mouse::Filter::default());
+    let mut mouse_filter = mouse::Filter::default();
     let mut last_check = Instant::now();
     while alive.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(Duration::from_millis(500)) {
             Ok(msg) => {
                 let now = Instant::now();
                 let keep = match msg {
-                    Msg::Key(ev) => keys.accept(ev, now),
+                    // Duplicate keyboards are filtered where the events are read (devices.rs).
+                    Msg::Key(_) => true,
                     Msg::Mouse(ev) => mouse_filter.accept(ev, now),
                     Msg::Pad(_) => true,
                 };
@@ -359,12 +341,15 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_key_events_are_dropped() {
-        let dupe = Msg::Key(KeyEvent { code: 57, down: true });
-        let fx = Fixture::start("dupe", AllowUid(me()), vec![dupe, dupe, Msg::Mouse(mouse::Event::Wheel)]);
+    fn quick_repeated_presses_of_one_key_are_all_forwarded() {
+        // Real presses can reach the reader together when the machine is busy.
+        let press = Msg::Key(KeyEvent { code: 57, down: true });
+        let fx = Fixture::start("repeat", AllowUid(me()), vec![press, press, press, Msg::Mouse(mouse::Event::Wheel)]);
         let mut c = fx.connect(&sub());
         assert_eq!(next(&mut c).unwrap(), ToClient::Hello(proto::VERSION));
-        assert_eq!(next(&mut c).unwrap(), ToClient::Event(dupe));
+        for _ in 0..3 {
+            assert_eq!(next(&mut c).unwrap(), ToClient::Event(press));
+        }
         assert_eq!(next(&mut c).unwrap(), ToClient::Event(Msg::Mouse(mouse::Event::Wheel)));
     }
 

@@ -411,7 +411,6 @@ pub struct Store {
     on_disk: bool,
     last_save: Instant,
     last_check: Instant,
-    last_key: Option<(u16, Instant)>,
     /// Sub-millimetre remainder of scroll distance, in micrometres.
     um_carry: u32,
 }
@@ -429,7 +428,7 @@ impl Store {
             }
         };
         let now = Instant::now();
-        Store { path, stats, dirty: false, on_disk, last_save: now, last_check: now, last_key: None, um_carry: 0 }
+        Store { path, stats, dirty: false, on_disk, last_save: now, last_check: now, um_carry: 0 }
     }
 
     /// Adds finger travel in micrometres, keeping the sub-millimetre rest.
@@ -442,14 +441,8 @@ impl Store {
     }
 
     pub fn record(&mut self, kind: Kind, per_key: bool) {
-        if let Kind::Key(code) = kind {
-            // A remapper can expose one keyboard twice; drop the duplicate.
-            let now = Instant::now();
-            if self.last_key.is_some_and(|(c, t)| c == code && now.duration_since(t) < Duration::from_millis(8)) {
-                return;
-            }
-            self.last_key = Some((code, now));
-        }
+        // Every event counts: duplicate keyboards are filtered where events are read, and two real
+        // presses of one key can arrive together when the machine is busy.
         self.stats.record(Local::now(), kind, per_key);
         self.dirty = true;
     }
@@ -658,10 +651,11 @@ mod tests {
     }
 
     #[test]
-    fn store_drops_duplicate_key_events() {
-        let mut store = Store::open(temp("dupe"));
-        store.record(Kind::Key(30), true);
-        store.record(Kind::Key(30), true);
-        assert_eq!(store.stats.day_counts(Local::now().day).keys, 1);
+    fn store_counts_presses_that_arrive_together() {
+        let mut store = Store::open(temp("burst"));
+        for _ in 0..5 {
+            store.record(Kind::Key(30), true);
+        }
+        assert_eq!(store.stats.day_counts(Local::now().day).keys, 5);
     }
 }
