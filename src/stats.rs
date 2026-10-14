@@ -433,9 +433,40 @@ pub fn live_path(path: &Path) -> PathBuf {
     path.with_extension("live.tsv")
 }
 
-/// Kept once when an old single-file `stats.tsv` is split.
-fn backup_path(path: &Path) -> PathBuf {
-    path.with_extension("tsv.bak")
+/// Where copies of an old single-file `stats.tsv` are kept: `stats.tsv.bak`, then `.bak.1`, ...
+fn backup_paths(path: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    (0..20).map(|n| match n {
+        0 => path.with_extension("tsv.bak"),
+        n => path.with_extension(format!("tsv.bak.{n}")),
+    })
+}
+
+/// True when `path` is an old single stats.tsv: it has no live file next to it yet.
+fn is_unsplit(path: &Path) -> bool {
+    path.exists() && !live_path(path).exists()
+}
+
+/// Makes sure a verified copy of `path` exists before it is split. An existing copy with the
+/// same content counts; one with different content (an older backup) is left alone and the
+/// next free name is used, so the current data is always what gets copied.
+fn back_up(path: &Path) -> io::Result<()> {
+    let data = fs::read(path)?;
+    for copy in backup_paths(path) {
+        match fs::read(&copy) {
+            Ok(old) if old == data => return Ok(()),
+            Ok(_) => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                write_atomic(&copy, &data)?;
+                if fs::read(&copy)? != data {
+                    let _ = fs::remove_file(&copy);
+                    return Err(io::Error::other("the copy does not match the original"));
+                }
+                return Ok(());
+            }
+            Err(_) => continue,
+        }
+    }
+    Err(io::Error::other("too many old backups next to stats.tsv"))
 }
 
 fn read_or_empty(path: &Path) -> io::Result<String> {
@@ -452,13 +483,13 @@ pub fn load(path: &Path) -> io::Result<Stats> {
 }
 
 /// Writes atomically (temp file, then rename), readable only by the user.
-fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
     let tmp = path.with_extension("tsv.tmp");
     let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
-    f.write_all(text.as_bytes())?;
+    f.write_all(data)?;
     f.flush()?;
     drop(f);
     fs::rename(&tmp, path)
@@ -466,20 +497,20 @@ fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
 
 /// Writes the small live file: the days from `boundary` on and the totals.
 fn save_live(path: &Path, stats: &Stats, boundary: i32) -> io::Result<()> {
-    write_atomic(&live_path(path), &stats.render(Part::Live, boundary))
+    write_atomic(&live_path(path), stats.render(Part::Live, boundary).as_bytes())
 }
 
 /// Writes both files, history first: if a crash lands in between, the days that moved
 /// are in both and the live file wins when they are read.
 pub fn save(path: &Path, stats: &Stats, boundary: i32) -> io::Result<()> {
-    write_atomic(path, &stats.render(Part::History, boundary))?;
+    write_atomic(path, stats.render(Part::History, boundary).as_bytes())?;
     save_live(path, stats, boundary)
 }
 
 /// Deletes the stats files (and the backup of an older layout). Returns whether any existed.
 pub fn wipe(path: &Path) -> io::Result<bool> {
     let mut any = false;
-    for p in [live_path(path), path.to_path_buf(), backup_path(path)] {
+    for p in [live_path(path), path.to_path_buf()].into_iter().chain(backup_paths(path)) {
         match fs::remove_file(&p) {
             Ok(()) => any = true,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -494,6 +525,8 @@ pub struct Store {
     path: PathBuf,
     stats: Stats,
     dirty: bool,
+    /// An old single stats.tsv whose copy could not be made yet: nothing is saved until it can.
+    unbacked: bool,
     /// Days before this are in the history file as last written (None: not written yet).
     history_boundary: Option<i32>,
     /// A day inside the history was changed (a clock that went back), so rewrite it.
@@ -518,16 +551,14 @@ impl Store {
             }
         };
         // An old single stats.tsv: keep a copy right away, before anything can touch it.
-        if path.exists() && !live_path(&path).exists() && !backup_path(&path).exists() {
-            if let Err(e) = fs::copy(&path, backup_path(&path)) {
-                eprintln!("stats: cannot back up {}: {e}", path.display());
-            }
-        }
+        let unbacked = is_unsplit(&path)
+            && back_up(&path).map_err(|e| eprintln!("stats: cannot back up {}: {e}", path.display())).is_err();
         let now = Instant::now();
         Store {
             path,
             stats,
             dirty: false,
+            unbacked,
             history_boundary: None,
             history_dirty: false,
             on_disk,
@@ -576,6 +607,17 @@ impl Store {
         }
         if !self.dirty || !(force || self.last_save.elapsed() >= SAVE_EVERY) {
             return;
+        }
+        // Never split an old file without a copy: retry the copy, and keep the file as it is.
+        if self.unbacked {
+            match back_up(&self.path) {
+                Ok(()) => self.unbacked = false,
+                Err(e) => {
+                    eprintln!("stats: cannot back up {}, not saving: {e}", self.path.display());
+                    self.last_save = Instant::now();
+                    return;
+                }
+            }
         }
         let today = Local::now().day;
         self.stats.prune(today);
@@ -797,7 +839,7 @@ mod tests {
         save(&path, &s, 10).unwrap();
         let mut older = s.clone();
         older.hours.get_mut(&(9, 9)).unwrap().taps = 0;
-        write_atomic(&live_path(&path), &older.render(Part::Live, 9)).unwrap();
+        write_atomic(&live_path(&path), older.render(Part::Live, 9).as_bytes()).unwrap();
         let back = load(&path).unwrap();
         assert_eq!(back.hours.len(), s.hours.len(), "no day twice");
         assert_eq!(back.day_counts(9).taps, 0, "the live file's version of the day wins");
@@ -868,6 +910,52 @@ mod tests {
         store.flush(true);
         assert_eq!(fs::read_to_string(&backup).unwrap(), "kept");
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn an_older_backup_is_not_overwritten_and_the_current_data_is_copied_next_to_it() {
+        let path = temp("two-backups");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bak = path.with_extension("tsv.bak");
+        fs::write(&bak, "from an earlier upgrade").unwrap();
+        let text = days_ending(Local::now().day - 3).to_text();
+        fs::write(&path, &text).unwrap();
+        let _store = Store::open(path.clone());
+        assert_eq!(fs::read_to_string(&bak).unwrap(), "from an earlier upgrade");
+        assert_eq!(fs::read_to_string(path.with_extension("tsv.bak.1")).unwrap(), text);
+        // Opening again does not make a third copy of the same data.
+        let _again = Store::open(path.clone());
+        assert!(!path.with_extension("tsv.bak.2").exists());
+        // And the wipe removes all of them.
+        assert!(wipe(&path).unwrap());
+        assert!(!bak.exists() && !path.with_extension("tsv.bak.1").exists());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn an_old_file_is_not_split_until_its_copy_can_be_made() {
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root ignores directory permissions
+        }
+        let path = temp("no-copy");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let text = days_ending(Local::now().day - 3).to_text();
+        fs::write(&path, &text).unwrap();
+        let dir = path.parent().unwrap();
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let mut store = Store::open(path.clone());
+        store.record(Kind::Tap, true);
+        store.flush(true);
+        assert_eq!(fs::read_to_string(&path).unwrap(), text, "the original is untouched");
+        assert!(!live_path(&path).exists());
+
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+        store.last_save = Instant::now() - SAVE_EVERY;
+        store.flush(true);
+        assert_eq!(fs::read_to_string(path.with_extension("tsv.bak")).unwrap(), text);
+        assert!(live_path(&path).exists());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
