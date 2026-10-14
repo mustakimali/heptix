@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-14
+
 ### Changed
 - Stats are saved in two files: `stats.tsv` holds the days before yesterday and is
   rewritten about once a day, `stats.live.tsv` holds recent days and the
