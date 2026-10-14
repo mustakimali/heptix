@@ -57,7 +57,8 @@ wait_for() {
 
 # Waits for the client's stats to show five presses of F24 (key 194); on failure says what is there.
 five_presses_counted() {
-  stats=/home/tester/.local/state/heptix/stats.tsv
+  # today's presses are in the live file
+  stats=/home/tester/.local/state/heptix/stats.live.tsv
   wait_for 20 grep -qE '^k [0-9-]+ 194 5$' "$stats" && return 0
   journalctl --sync >/dev/null 2>&1
   echo "an independent reader of the device saw (presses, dropped): $(cat /tmp/evcount.out 2>&1)"
