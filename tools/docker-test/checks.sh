@@ -64,6 +64,15 @@ five_presses_counted() {
   echo "reader log:"; journalctl -u heptix-reader.service --no-pager -o cat 2>&1 | tail -8
   return 1
 }
+# Runs a command with its output in <log>; shows the end of the log if it fails.
+run_logged() {
+  log=$1
+  shift
+  "$@" >"$log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then echo "---- $log (exit $rc):"; tail -25 "$log"; fi
+  return "$rc"
+}
 reader_log() { journalctl -u heptix-reader.service --no-pager -o cat 2>/dev/null; }
 client_log() { journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service 2>/dev/null; }
 reader_pid() { systemctl show -p MainPID --value heptix-reader.service; }
@@ -105,7 +114,7 @@ echo 1000 >/etc/heptix/allow-uids
 
 # --- service mode -----------------------------------------------------------
 echo "== service mode install (make install MODE=service)"
-as_tester sh -c 'cd /home/tester/repo && make install MODE=service YES=1 CARGO=true' >/tmp/install-service.log 2>&1
+run_logged /tmp/install-service.log as_tester sh -c 'cd /home/tester/repo && make install MODE=service YES=1 CARGO=true'
 check "make install exits cleanly" test $? -eq 0
 check "binary is installed root-owned in /usr/lib/heptix" sh -c '[ "$(stat -c "%U %a" /usr/lib/heptix/heptix)" = "root 755" ]'
 check "unit files are installed" sh -c 'test -f /etc/systemd/system/heptix-reader.service && test -f /etc/systemd/user/heptix.service'
@@ -190,14 +199,14 @@ systemctl restart heptix-reader.service
 check "the client reconnects after the reader restarts" wait_for 30 sh -c "[ \$(journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service | grep -c 'reader: connected') -gt $BEFORE ]"
 
 echo "== uninstall (make uninstall)"
-as_tester sh -c 'cd /home/tester/repo && make uninstall' >/tmp/uninstall.log 2>&1
+run_logged /tmp/uninstall.log as_tester sh -c 'cd /home/tester/repo && make uninstall'
 check "make uninstall exits cleanly" test $? -eq 0
 check "system files are gone" sh -c '! test -e /usr/lib/heptix/heptix && ! test -e /etc/systemd/system/heptix-reader.service && ! test -e /etc/systemd/user/heptix.service && ! test -e /usr/local/bin/heptix'
 check "reader service is stopped" sh -c '! systemctl is-active --quiet heptix-reader.service'
 
 # --- direct mode ------------------------------------------------------------
 echo "== direct mode install (make install MODE=direct)"
-as_tester sh -c 'cd /home/tester/repo && make install MODE=direct YES=1 CARGO=true' >/tmp/install-direct.log 2>&1
+run_logged /tmp/install-direct.log as_tester sh -c 'cd /home/tester/repo && make install MODE=direct YES=1 CARGO=true'
 check "make install exits cleanly" test $? -eq 0
 check "binary is in ~/.local/bin" test -x /home/tester/.local/bin/heptix
 check "user unit runs in explicit direct mode" grep -q -- '--direct' /home/tester/.config/systemd/user/heptix.service
@@ -206,7 +215,7 @@ check "the user was added to the input group" sh -c 'id -nG tester | tr " " "\n"
 check "no reader service was installed" sh -c '! test -e /etc/systemd/system/heptix-reader.service'
 
 echo "== switching from direct to service mode"
-as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --service --yes >/tmp/install-switch.log 2>&1
+run_logged /tmp/install-switch.log as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --service --yes
 check "installer exits cleanly" test $? -eq 0
 check "the per-user direct install was removed" sh -c '! test -e /home/tester/.local/bin/heptix && ! test -e /home/tester/.config/systemd/user/heptix.service'
 check "reader service is active again" wait_for 20 systemctl is-active --quiet heptix-reader.service
