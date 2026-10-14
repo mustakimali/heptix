@@ -40,9 +40,12 @@ fi
 for f in /etc/pam.d/* /usr/lib/pam.d/*; do
   [ -f "$f" ] && sed -i -E 's/^(session[[:space:]]+)required([[:space:]]+pam_loginuid\.so)/\1optional\2/' "$f"
 done
-# Fedora's user manager PAM stack checks the account through the setuid helper unix_chkpwd, which
-# fails inside a container on some hosts ("could not obtain user info"). The checks are not about
-# PAM, so let the account stage pass in the test image.
+# Fedora's PAM stacks (the user manager, sudo, su) check the account through the setuid helper
+# unix_chkpwd, which fails inside a container on some hosts ("could not obtain user info"). The
+# checks are not about PAM, so let the account stage pass in the test image.
+for f in /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+  [ -f "$f" ] && sed -i -E 's/^(account[[:space:]]+required[[:space:]]+)pam_unix\.so.*$/\1pam_permit.so/' "$f"
+done
 for f in /etc/pam.d/systemd-user /usr/lib/pam.d/systemd-user; do
   [ -f "$f" ] && sed -i -E 's/^(account[[:space:]]+)(sufficient|required)([[:space:]]+pam_unix\.so.*)$/\1sufficient pam_permit.so/' "$f"
 done
