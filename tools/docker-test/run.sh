@@ -77,5 +77,7 @@ set -- --cgroupns=host \
 if [ -e /dev/uinput ] && [ -z "${HEPTIX_NO_UINPUT:-}" ]; then
   set -- "$@" --device /dev/uinput --device-cgroup-rule 'c 13:* rmw'
 fi
-docker run -d --name "$NAME" "$@" "$IMAGE" >/dev/null
+# Extra docker arguments, for example HEPTIX_DOCKER_ARGS="--cpus 0.3" to imitate a slow machine.
+# shellcheck disable=SC2086
+docker run -d --name "$NAME" "$@" ${HEPTIX_DOCKER_ARGS:-} "$IMAGE" >/dev/null
 docker exec "$NAME" sh /stage/checks.sh
