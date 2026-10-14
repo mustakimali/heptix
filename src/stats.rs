@@ -498,8 +498,6 @@ pub struct Store {
     history_boundary: Option<i32>,
     /// A day inside the history was changed (a clock that went back), so rewrite it.
     history_dirty: bool,
-    /// The files are still the old single `stats.tsv`: keep a copy before splitting it.
-    backup_pending: bool,
     on_disk: bool,
     last_save: Instant,
     last_check: Instant,
@@ -519,7 +517,12 @@ impl Store {
                 (Stats::default(), false)
             }
         };
-        let backup_pending = path.exists() && !live_path(&path).exists();
+        // An old single stats.tsv: keep a copy right away, before anything can touch it.
+        if path.exists() && !live_path(&path).exists() && !backup_path(&path).exists() {
+            if let Err(e) = fs::copy(&path, backup_path(&path)) {
+                eprintln!("stats: cannot back up {}: {e}", path.display());
+            }
+        }
         let now = Instant::now();
         Store {
             path,
@@ -527,7 +530,6 @@ impl Store {
             dirty: false,
             history_boundary: None,
             history_dirty: false,
-            backup_pending,
             on_disk,
             last_save: now,
             last_check: now,
@@ -561,7 +563,8 @@ impl Store {
     pub fn flush(&mut self, force: bool) {
         if self.on_disk && self.last_check.elapsed() >= WIPE_CHECK_EVERY {
             self.last_check = Instant::now();
-            if !live_path(&self.path).exists() {
+            // Both gone: an old single stats.tsv has no live file yet, and is not a wipe.
+            if !self.path.exists() && !live_path(&self.path).exists() {
                 // Wiped: drop the counters, and any history left behind so it does not come back.
                 let _ = wipe(&self.path);
                 self.stats = Stats::default();
@@ -569,7 +572,6 @@ impl Store {
                 self.on_disk = false;
                 self.history_boundary = None;
                 self.history_dirty = false;
-                self.backup_pending = false;
             }
         }
         if !self.dirty || !(force || self.last_save.elapsed() >= SAVE_EVERY) {
@@ -582,23 +584,17 @@ impl Store {
         // writes just the small live file.
         let boundary = today - 1;
         let history_due = self.history_boundary != Some(boundary) || self.history_dirty;
-        let result = (|| {
-            if self.backup_pending && !backup_path(&self.path).exists() {
-                fs::copy(&self.path, backup_path(&self.path))?;
-            }
-            if history_due {
-                save(&self.path, &self.stats, boundary)
-            } else {
-                save_live(&self.path, &self.stats, boundary)
-            }
-        })();
+        let result = if history_due {
+            save(&self.path, &self.stats, boundary)
+        } else {
+            save_live(&self.path, &self.stats, boundary)
+        };
         match result {
             Ok(()) => {
                 if history_due {
                     self.history_boundary = Some(boundary);
                     self.history_dirty = false;
                 }
-                self.backup_pending = false;
                 self.dirty = false;
                 self.on_disk = true;
                 self.last_save = Instant::now();
@@ -848,10 +844,17 @@ mod tests {
         assert_eq!(load(&path).unwrap(), old);
 
         let mut store = Store::open(path.clone());
-        store.record(Kind::Tap, true);
-        store.flush(true);
         let backup = path.with_extension("tsv.bak");
-        assert_eq!(fs::read_to_string(&backup).unwrap(), old_text);
+        assert_eq!(fs::read_to_string(&backup).unwrap(), old_text, "backed up before anything else");
+        // The wipe check runs before the first save, as it does in the service: the old file
+        // has no live file next to it yet, and that is not a wipe.
+        store.last_check = Instant::now() - Duration::from_secs(5);
+        store.flush(false);
+        assert!(path.exists(), "an old single file is not a wipe");
+        assert_eq!(load(&path).unwrap(), old);
+        store.record(Kind::Tap, true);
+        store.last_check = Instant::now() - Duration::from_secs(5);
+        store.flush(true);
         assert!(live_path(&path).exists());
         let after = load(&path).unwrap();
         assert_eq!(after.lifetime.keys, old.lifetime.keys, "the totals survive the split");
