@@ -19,6 +19,7 @@ mod config;
 mod devices;
 mod harden;
 mod heatmap;
+mod info;
 mod keyboard;
 mod mouse;
 mod peer;
@@ -66,6 +67,7 @@ OPTIONS:
   --tui               Open the settings editor even with other options
   --config <PATH>     Use this config file
   --list              List detected touchpads, keyboards and mice and exit
+  --info              Show the version, file and socket paths, running mode and service state, and exit
   --device <PATH>     Use this /dev/input/eventN as the touchpad instead of auto-detecting
   --sound <NAME|FILE> Tap sound: haptic, tock, tick, thud, crown, wheel_of_time, or a WAV/CAF file
   --scroll-sound <X>  Two-finger scroll sound: any of the above, or off
@@ -118,6 +120,7 @@ struct Cli {
     reader_unsafe_install: bool,
     tui: bool,
     list: bool,
+    info: bool,
     preview: bool,
     stats: bool,
     stats_reset: bool,
@@ -138,6 +141,7 @@ fn parse_args() -> Cli {
         reader_unsafe_install: false,
         tui: false,
         list: false,
+        info: false,
         preview: false,
         stats: false,
         stats_reset: false,
@@ -174,6 +178,7 @@ fn parse_args() -> Cli {
                 }));
             }
             "--list" => c.list = true,
+            "--info" => c.info = true,
             "--preview" => c.preview = true,
             "--stats" => c.stats = true,
             "--stats-reset" => c.stats_reset = true,
@@ -286,6 +291,10 @@ fn main() {
     let cli = parse_args();
     if cli.reader {
         run_reader(&cli);
+    }
+    if cli.info {
+        info::print(&cli.config, &cli.reader_socket.clone().unwrap_or_else(|| client::DEFAULT_SOCKET.into()));
+        return;
     }
     let (mut settings, notes) = Settings::load_or_create(&cli.config);
 

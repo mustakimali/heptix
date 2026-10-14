@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-14
+
+### Added
+- `heptix --info` shows the version, revision and build date, the file and socket
+  paths, the running mode (reader service or direct), the state of the client and
+  reader services, and a status line naming whatever is wrong. It is read-only.
+
 ### Fixed
 - The Nix package takes its version from `Cargo.toml` instead of a hard-coded
   `0.8.0`, so `nix` shows the real version after each release.
