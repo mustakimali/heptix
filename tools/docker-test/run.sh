@@ -49,7 +49,7 @@ stage=$(mktemp -d)
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$stage"' EXIT
 cp "$BIN" "$stage/heptix"
 cp -r "$ROOT/packaging" "$stage/packaging"
-cp "$ROOT/install.sh" "$ROOT/Makefile" "$HERE/checks.sh" "$HERE/uinput_key.py" "$stage/"
+cp "$ROOT/install.sh" "$ROOT/Makefile" "$HERE/checks.sh" "$HERE/uinput_key.py" "$HERE/evcount.py" "$stage/"
 chmod -R a+rX "$stage"
 
 if [ "$DISTRO" = alpine ]; then
