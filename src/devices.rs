@@ -27,11 +27,11 @@ use std::collections::HashSet;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::os::fd::{AsRawFd, RawFd};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a watcher waits for input before it checks whether it was told to stop.
 const STOP_POLL_MS: i32 = 250;
@@ -117,8 +117,34 @@ pub fn list(opts: &Options) -> Vec<(PathBuf, String, Role)> {
         .collect()
 }
 
+/// Same key and direction from two different devices within this window is one event
+/// seen twice (a remapper exposing the same keyboard again).
+const KEY_DUPLICATE: Duration = Duration::from_millis(8);
+
+/// Drops a key event that a *different* device just reported identically. Repeats from one
+/// device are never dropped: two real presses of one key can arrive together when the
+/// machine is busy, and they must both count.
+#[derive(Default)]
+pub struct KeyDupes {
+    last: Option<(u16, bool, usize, Instant)>,
+}
+
+impl KeyDupes {
+    pub fn accept(&mut self, device: usize, ev: keyboard::KeyEvent, now: Instant) -> bool {
+        let duplicate = self
+            .last
+            .is_some_and(|(code, down, from, at)| code == ev.code && down == ev.down && from != device && now.duration_since(at) < KEY_DUPLICATE);
+        if !duplicate {
+            self.last = Some((ev.code, ev.down, device, now));
+        }
+        !duplicate
+    }
+}
+
 struct Shared {
     tx: Sender<Msg>,
+    key_dupes: Mutex<KeyDupes>,
+    next_device: AtomicUsize,
     opts: Options,
     watched: Mutex<HashSet<PathBuf>>,
     stop: Arc<AtomicBool>,
@@ -155,7 +181,14 @@ impl Drop for Handle {
 /// `opts.hotplug`, until the returned handle is dropped.
 pub fn start(tx: Sender<Msg>, opts: Options) -> Handle {
     let stop = Arc::new(AtomicBool::new(false));
-    let shared = Arc::new(Shared { tx, opts, watched: Mutex::new(HashSet::new()), stop: Arc::clone(&stop) });
+    let shared = Arc::new(Shared {
+        tx,
+        opts,
+        watched: Mutex::new(HashSet::new()),
+        stop: Arc::clone(&stop),
+        key_dupes: Mutex::new(KeyDupes::default()),
+        next_device: AtomicUsize::new(0),
+    });
     let attached = scan(&shared);
     if let Some(only) = &shared.opts.only_touchpad {
         if !shared.watched.lock().unwrap().contains(only) {
@@ -209,6 +242,7 @@ fn attach(shared: &Arc<Shared>, role: Role, path: PathBuf, dev: Device) {
     thread::spawn(move || {
         let (tx, verbose) = (shared.tx.clone(), shared.opts.verbose);
         let stop = Arc::clone(&shared.stop);
+        let device_id = shared.next_device.fetch_add(1, Ordering::Relaxed);
         let result = match role {
             Role::Touchpad => tap::watch(dev, shared.opts.max_ms, shared.opts.scroll_ticks, &stop, |event| {
                 if verbose {
@@ -217,7 +251,9 @@ fn attach(shared: &Arc<Shared>, role: Role, path: PathBuf, dev: Device) {
                 let _ = tx.send(Msg::Pad(event));
             }),
             Role::Keyboard => keyboard::watch(dev, &stop, |ev| {
-                let _ = tx.send(Msg::Key(ev));
+                if shared.key_dupes.lock().unwrap().accept(device_id, ev, Instant::now()) {
+                    let _ = tx.send(Msg::Key(ev));
+                }
             }),
             Role::Mouse => mouse::watch(dev, &stop, |ev| {
                 if verbose {
@@ -365,6 +401,27 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         watcher.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn key_dupes_drop_a_second_device_but_never_repeats_from_one_device() {
+        let press = keyboard::KeyEvent { code: 30, down: true };
+        let t = Instant::now();
+        let at = |ms: u64| t + Duration::from_millis(ms);
+        let mut d = KeyDupes::default();
+        assert!(d.accept(0, press, at(0)));
+        assert!(!d.accept(1, press, at(3)), "the same event from another device within 8 ms is a duplicate");
+        assert!(d.accept(1, press, at(20)), "later it is a new press");
+        // One device pressing the same key several times, all delivered together:
+        let mut d = KeyDupes::default();
+        for i in 0..5 {
+            assert!(d.accept(0, press, at(i)), "press {i} from one device must count");
+        }
+        // A different key or direction is never a duplicate.
+        let mut d = KeyDupes::default();
+        assert!(d.accept(0, press, at(0)));
+        assert!(d.accept(1, keyboard::KeyEvent { code: 31, down: true }, at(1)));
+        assert!(d.accept(1, keyboard::KeyEvent { code: 30, down: false }, at(2)));
     }
 
     #[test]
