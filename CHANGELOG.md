@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-14
+
 ### Changed
 - Mouse clicks are quieter in auto volume mode (25, was 50) and the custom-mode
   default for `mouse_volume` follows. The level is chosen by perceived loudness
