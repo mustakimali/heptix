@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- The Nix package takes its version from `Cargo.toml` instead of a hard-coded
+  `0.8.0`, so `nix` shows the real version after each release.
+
 ## [0.9.0] - 2026-10-14
 
 ### Changed
