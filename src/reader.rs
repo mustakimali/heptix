@@ -375,6 +375,11 @@ mod tests {
         let fx = Fixture::start("replace", AllowUid(me()), vec![]);
         let mut first = fx.connect(&sub());
         assert_eq!(next(&mut first).unwrap(), ToClient::Hello(proto::VERSION));
+        // Hello is sent before the devices are opened; the handles are numbered in opening order.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && fx.handles.lock().unwrap().is_empty() {
+            thread::sleep(Duration::from_millis(5));
+        }
         let mut second = fx.connect(&sub());
         assert_eq!(next(&mut second).unwrap(), ToClient::Hello(proto::VERSION));
         assert!(next(&mut first).is_err(), "the old session must be closed");
