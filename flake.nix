@@ -27,7 +27,7 @@
       packages = forAll (pkgs: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "heptix";
-          version = "0.8.0";
+          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           nativeBuildInputs = [ pkgs.makeWrapper ];
