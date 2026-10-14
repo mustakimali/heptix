@@ -183,6 +183,13 @@ fn parse_date(s: &str) -> Option<i32> {
     Some(days_from_civil(y, m, d))
 }
 
+/// Which of the two stats files is being written.
+#[derive(Clone, Copy, PartialEq)]
+enum Part {
+    History,
+    Live,
+}
+
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct Stats {
     /// Totals per (day, hour).
@@ -287,20 +294,32 @@ impl Stats {
         (from..=to).map(|d| (d, self.metric_day(d, metric))).filter(|(_, n)| *n > 0).max_by_key(|(d, n)| (*n, -*d))
     }
 
+    /// Everything in one text, as a single legacy-style file.
+    #[cfg(test)]
     pub fn to_text(&self) -> String {
+        self.render(Part::Live, i32::MIN)
+    }
+
+    /// One of the two files: the history holds the days before `boundary`, the live
+    /// file the days from `boundary` on plus the all-time totals.
+    fn render(&self, part: Part, boundary: i32) -> String {
         let mut out = String::from(
             "# heptix activity stats: counters only (totals per hour, presses per key per day).\n\
              # h <date>T<hour> <keys> <taps> <clicks> <scroll ticks> <scroll mm>\n\
              # k <date> <keycode> <count>\n\
              # t <keys> <taps> <clicks> <scroll ticks> <scroll mm>   (all-time totals)\n\
-             # s <date>   (first day recorded)\n",
+             # s <date>   (first day recorded)\n\
+             # Days before today are in stats.tsv, recent days and the totals in stats.live.tsv.\n",
         );
-        let l = &self.lifetime;
-        out += &format!("t {} {} {} {} {}\n", l.keys, l.taps, l.clicks, l.scrolls, l.scroll_mm);
+        let wanted = |day: i32| (day < boundary) == (part == Part::History);
+        if part == Part::Live {
+            let l = &self.lifetime;
+            out += &format!("t {} {} {} {} {}\n", l.keys, l.taps, l.clicks, l.scrolls, l.scroll_mm);
+        }
         if let Some(day) = self.since {
             out += &format!("s {}\n", date_string(day));
         }
-        for (&(day, hour), c) in &self.hours {
+        for (&(day, hour), c) in self.hours.iter().filter(|((d, _), _)| wanted(*d)) {
             out += &format!(
                 "h {}T{hour:02} {} {} {} {} {}\n",
                 date_string(day),
@@ -311,30 +330,67 @@ impl Stats {
                 c.scroll_mm
             );
         }
-        for (&(day, code), n) in &self.keys {
+        for (&(day, code), n) in self.keys.iter().filter(|((d, _), _)| wanted(*d)) {
             out += &format!("k {} {code} {n}\n", date_string(day));
         }
         out
     }
 
-    /// Parses `to_text` output. Returns the stats and how many lines were skipped.
+    /// Parses one stats file. Returns the stats and how many lines were skipped.
+    #[cfg(test)]
     pub fn parse(text: &str) -> (Stats, usize) {
         let mut s = Stats::default();
+        let (skipped, has_totals) = s.parse_into(text);
+        s.finish(has_totals);
+        (s, skipped)
+    }
+
+    /// Reads the history and the live file together. A day present in the live file
+    /// replaces that day in the history, so a save interrupted between the two writes
+    /// never counts anything twice.
+    pub fn parse_split(history: &str, live: &str) -> Stats {
+        let mut s = Stats::default();
+        let (_, history_totals) = s.parse_into(history);
+        let mut l = Stats::default();
+        let (_, live_totals) = l.parse_into(live);
+        let days: std::collections::BTreeSet<i32> =
+            l.hours.keys().map(|(d, _)| *d).chain(l.keys.keys().map(|(d, _)| *d)).collect();
+        s.hours.retain(|(d, _), _| !days.contains(d));
+        s.keys.retain(|(d, _), _| !days.contains(d));
+        s.hours.extend(l.hours);
+        s.keys.extend(l.keys);
+        if live_totals {
+            s.lifetime = l.lifetime;
+        }
+        s.since = match (s.since, l.since) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        s.finish(history_totals || live_totals);
+        s
+    }
+
+    /// Returns (lines skipped, whether a totals line was present).
+    fn parse_into(&mut self, text: &str) -> (usize, bool) {
         let mut skipped = 0;
         let mut has_totals = false;
         for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
             has_totals |= line.starts_with("t ");
-            if s.parse_line(line).is_none() {
+            if self.parse_line(line).is_none() {
                 skipped += 1;
             }
         }
+        (skipped, has_totals)
+    }
+
+    /// Fills in what a file without totals or a first-day line leaves out.
+    fn finish(&mut self, has_totals: bool) {
         if !has_totals {
-            s.lifetime = s.range_counts(i32::MIN, i32::MAX);
+            self.lifetime = self.range_counts(i32::MIN, i32::MAX);
         }
-        if s.since.is_none() {
-            s.since = s.hours.keys().next().map(|(d, _)| *d);
+        if self.since.is_none() {
+            self.since = self.hours.keys().next().map(|(d, _)| *d);
         }
-        (s, skipped)
     }
 
     fn parse_line(&mut self, line: &str) -> Option<()> {
@@ -372,35 +428,65 @@ pub fn default_path() -> PathBuf {
     base.join("heptix").join("stats.tsv")
 }
 
-/// Reads the stats file; a missing file is empty stats.
-pub fn load(path: &Path) -> io::Result<Stats> {
+/// The file holding recent days and the totals, next to the history file.
+pub fn live_path(path: &Path) -> PathBuf {
+    path.with_extension("live.tsv")
+}
+
+/// Kept once when an old single-file `stats.tsv` is split.
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("tsv.bak")
+}
+
+fn read_or_empty(path: &Path) -> io::Result<String> {
     match fs::read_to_string(path) {
-        Ok(text) => Ok(Stats::parse(&text).0),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Stats::default()),
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e),
     }
 }
 
+/// Reads the history and the live file; missing files are empty stats.
+pub fn load(path: &Path) -> io::Result<Stats> {
+    Ok(Stats::parse_split(&read_or_empty(path)?, &read_or_empty(&live_path(path))?))
+}
+
 /// Writes atomically (temp file, then rename), readable only by the user.
-pub fn save(path: &Path, stats: &Stats) -> io::Result<()> {
+fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
     let tmp = path.with_extension("tsv.tmp");
     let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
-    f.write_all(stats.to_text().as_bytes())?;
+    f.write_all(text.as_bytes())?;
     f.flush()?;
     drop(f);
     fs::rename(&tmp, path)
 }
 
-/// Deletes all stored stats. Returns whether a file existed.
+/// Writes the small live file: the days from `boundary` on and the totals.
+fn save_live(path: &Path, stats: &Stats, boundary: i32) -> io::Result<()> {
+    write_atomic(&live_path(path), &stats.render(Part::Live, boundary))
+}
+
+/// Writes both files, history first: if a crash lands in between, the days that moved
+/// are in both and the live file wins when they are read.
+pub fn save(path: &Path, stats: &Stats, boundary: i32) -> io::Result<()> {
+    write_atomic(path, &stats.render(Part::History, boundary))?;
+    save_live(path, stats, boundary)
+}
+
+/// Deletes the stats files (and the backup of an older layout). Returns whether any existed.
 pub fn wipe(path: &Path) -> io::Result<bool> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e),
+    let mut any = false;
+    for p in [live_path(path), path.to_path_buf(), backup_path(path)] {
+        match fs::remove_file(&p) {
+            Ok(()) => any = true,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
     }
+    Ok(any)
 }
 
 /// The service's live counters, flushed to disk periodically.
@@ -408,6 +494,12 @@ pub struct Store {
     path: PathBuf,
     stats: Stats,
     dirty: bool,
+    /// Days before this are in the history file as last written (None: not written yet).
+    history_boundary: Option<i32>,
+    /// A day inside the history was changed (a clock that went back), so rewrite it.
+    history_dirty: bool,
+    /// The files are still the old single `stats.tsv`: keep a copy before splitting it.
+    backup_pending: bool,
     on_disk: bool,
     last_save: Instant,
     last_check: Instant,
@@ -419,7 +511,7 @@ impl Store {
     pub fn open(path: PathBuf) -> Store {
         let (stats, on_disk) = match load(&path) {
             Ok(s) => {
-                let exists = path.exists();
+                let exists = path.exists() || live_path(&path).exists();
                 (s, exists)
             }
             Err(e) => {
@@ -427,8 +519,20 @@ impl Store {
                 (Stats::default(), false)
             }
         };
+        let backup_pending = path.exists() && !live_path(&path).exists();
         let now = Instant::now();
-        Store { path, stats, dirty: false, on_disk, last_save: now, last_check: now, um_carry: 0 }
+        Store {
+            path,
+            stats,
+            dirty: false,
+            history_boundary: None,
+            history_dirty: false,
+            backup_pending,
+            on_disk,
+            last_save: now,
+            last_check: now,
+            um_carry: 0,
+        }
     }
 
     /// Adds finger travel in micrometres, keeping the sub-millimetre rest.
@@ -443,8 +547,12 @@ impl Store {
     pub fn record(&mut self, kind: Kind, per_key: bool) {
         // Every event counts: duplicate keyboards are filtered where events are read, and two real
         // presses of one key can arrive together when the machine is busy.
-        self.stats.record(Local::now(), kind, per_key);
+        let now = Local::now();
+        self.stats.record(now, kind, per_key);
         self.dirty = true;
+        if self.history_boundary.is_some_and(|b| now.day < b) {
+            self.history_dirty = true;
+        }
     }
 
     /// Saves when due (or `force`). Notices a wipe done by the editor or
@@ -453,18 +561,44 @@ impl Store {
     pub fn flush(&mut self, force: bool) {
         if self.on_disk && self.last_check.elapsed() >= WIPE_CHECK_EVERY {
             self.last_check = Instant::now();
-            if !self.path.exists() {
+            if !live_path(&self.path).exists() {
+                // Wiped: drop the counters, and any history left behind so it does not come back.
+                let _ = wipe(&self.path);
                 self.stats = Stats::default();
                 self.dirty = false;
                 self.on_disk = false;
+                self.history_boundary = None;
+                self.history_dirty = false;
+                self.backup_pending = false;
             }
         }
         if !self.dirty || !(force || self.last_save.elapsed() >= SAVE_EVERY) {
             return;
         }
-        self.stats.prune(Local::now().day);
-        match save(&self.path, &self.stats) {
+        let today = Local::now().day;
+        self.stats.prune(today);
+        // Days before yesterday are final and live in the history file, which is rewritten
+        // only when that set changes (a new day, or after a long sleep). Every other save
+        // writes just the small live file.
+        let boundary = today - 1;
+        let history_due = self.history_boundary != Some(boundary) || self.history_dirty;
+        let result = (|| {
+            if self.backup_pending && !backup_path(&self.path).exists() {
+                fs::copy(&self.path, backup_path(&self.path))?;
+            }
+            if history_due {
+                save(&self.path, &self.stats, boundary)
+            } else {
+                save_live(&self.path, &self.stats, boundary)
+            }
+        })();
+        match result {
             Ok(()) => {
+                if history_due {
+                    self.history_boundary = Some(boundary);
+                    self.history_dirty = false;
+                }
+                self.backup_pending = false;
                 self.dirty = false;
                 self.on_disk = true;
                 self.last_save = Instant::now();
@@ -613,11 +747,165 @@ mod tests {
         let path = temp("save");
         let mut s = Stats::default();
         s.record(at(5, 5), Kind::Key(5), true);
-        save(&path, &s).unwrap();
+        save(&path, &s, 4).unwrap();
         assert_eq!(load(&path).unwrap(), s);
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        for file in [path.clone(), live_path(&path)] {
+            assert_eq!(fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
         assert_eq!(fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
         assert!(!path.with_extension("tsv.tmp").exists());
+        assert!(!live_path(&path).with_extension("tsv.tmp").exists());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Days 1..=10 with a few keys each, plus a total that is not just their sum.
+    fn ten_days() -> Stats {
+        days_ending(10)
+    }
+
+    fn days_ending(last: i32) -> Stats {
+        let mut s = Stats::default();
+        for d in last - 9..=last {
+            s.record(at(d, 8), Kind::Key(30), true);
+            s.record(at(d, 9), Kind::Key(48), true);
+            s.record(at(d, 9), Kind::Tap, true);
+        }
+        s.lifetime.keys += 1000;
+        s
+    }
+
+    #[test]
+    fn days_before_the_boundary_go_to_the_history_and_the_rest_to_the_live_file() {
+        let path = temp("split");
+        let s = ten_days();
+        save(&path, &s, 9).unwrap();
+        let history = fs::read_to_string(&path).unwrap();
+        let live = fs::read_to_string(live_path(&path)).unwrap();
+        let day = |d| date_string(d);
+        assert!(history.contains(&format!("h {}T08", day(8))));
+        assert!(!history.contains(&format!("h {}T08", day(9))));
+        assert!(!history.lines().any(|l| l.starts_with("t ")), "the totals change every save: live file only");
+        assert!(live.contains(&format!("h {}T08", day(9))) && live.contains(&format!("h {}T08", day(10))));
+        assert!(!live.contains(&format!("h {}T08", day(8))));
+        assert!(live.lines().any(|l| l.starts_with("t ")));
+        assert_eq!(load(&path).unwrap(), s);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_day_in_both_files_is_counted_once_and_the_live_file_wins() {
+        // A crash between the two writes: the history already holds days 8 and 9, the old
+        // live file still holds them too (with slightly older counts).
+        let path = temp("both");
+        let s = ten_days();
+        save(&path, &s, 10).unwrap();
+        let mut older = s.clone();
+        older.hours.get_mut(&(9, 9)).unwrap().taps = 0;
+        write_atomic(&live_path(&path), &older.render(Part::Live, 9)).unwrap();
+        let back = load(&path).unwrap();
+        assert_eq!(back.hours.len(), s.hours.len(), "no day twice");
+        assert_eq!(back.day_counts(9).taps, 0, "the live file's version of the day wins");
+        assert_eq!(back.day_counts(8), s.day_counts(8));
+        assert_eq!(back.lifetime, s.lifetime);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn days_left_in_the_live_file_by_a_long_sleep_move_to_the_history_on_the_next_save() {
+        // The machine slept from day 3 to day 10: the live file still holds days 2 and 3.
+        let path = temp("sleep");
+        let s = ten_days();
+        let mut slept = Stats::default();
+        slept.hours = s.hours.range((1, 0)..=(3, 23)).map(|(k, v)| (*k, *v)).collect();
+        slept.keys = s.keys.range((1, 0)..=(3, u16::MAX)).map(|(k, v)| (*k, *v)).collect();
+        slept.lifetime = slept.range_counts(0, 100);
+        slept.since = Some(1);
+        save(&path, &slept, 2).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains(&format!("h {}T08", date_string(2))));
+        // Awake on day 10: loaded as is, nothing lost, then the next save re-splits.
+        let mut awake = load(&path).unwrap();
+        assert_eq!(awake, slept);
+        awake.record(at(10, 8), Kind::Key(30), true);
+        save(&path, &awake, 9).unwrap();
+        let history = fs::read_to_string(&path).unwrap();
+        let live = fs::read_to_string(live_path(&path)).unwrap();
+        for d in 1..=3 {
+            assert!(history.contains(&format!("h {}T08", date_string(d))), "day {d} moved to the history");
+            assert!(!live.contains(&format!("h {}T08", date_string(d))));
+        }
+        assert_eq!(load(&path).unwrap(), awake);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn an_old_single_file_is_split_on_the_first_save_and_backed_up_once() {
+        let path = temp("legacy");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let today = Local::now().day;
+        let old = days_ending(today - 3); // recent, so the save does not prune it
+        let old_text = old.to_text();
+        fs::write(&path, &old_text).unwrap();
+        assert_eq!(load(&path).unwrap(), old);
+
+        let mut store = Store::open(path.clone());
+        store.record(Kind::Tap, true);
+        store.flush(true);
+        let backup = path.with_extension("tsv.bak");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), old_text);
+        assert!(live_path(&path).exists());
+        let after = load(&path).unwrap();
+        assert_eq!(after.lifetime.keys, old.lifetime.keys, "the totals survive the split");
+        assert_eq!(after.lifetime.taps, old.lifetime.taps + 1);
+        assert_eq!(after.since, old.since);
+        assert_eq!(after.range_counts(today - 20, today - 3), old.range_counts(today - 20, today - 3));
+
+        // The backup is made once: later saves leave it alone.
+        fs::write(&backup, "kept").unwrap();
+        store.record(Kind::Tap, true);
+        store.flush(true);
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "kept");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn ordinary_saves_write_only_the_live_file() {
+        let path = temp("live-only");
+        let mut store = Store::open(path.clone());
+        store.record(Kind::Key(30), true);
+        store.flush(true);
+        assert!(path.exists() && live_path(&path).exists());
+        fs::remove_file(&path).unwrap();
+        store.record(Kind::Key(30), true);
+        store.flush(true);
+        assert!(!path.exists(), "the history is not rewritten while the day has not changed");
+        assert_eq!(load(&path).unwrap().lifetime.keys, 2);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_change_to_a_day_inside_the_history_rewrites_it() {
+        let path = temp("clock");
+        let mut store = Store::open(path.clone());
+        store.record(Kind::Key(30), true);
+        store.flush(true);
+        fs::remove_file(&path).unwrap();
+        // A clock that went back: this press lands on a day the history owns.
+        store.stats.record(at(Local::now().day - 5, 3), Kind::Key(30), true);
+        store.history_dirty = true;
+        store.dirty = true;
+        store.flush(true);
+        assert!(path.exists());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn wiping_removes_every_file() {
+        let path = temp("wipe-all");
+        save(&path, &ten_days(), 5).unwrap();
+        fs::write(path.with_extension("tsv.bak"), "old").unwrap();
+        assert!(wipe(&path).unwrap());
+        assert!(!path.exists() && !live_path(&path).exists() && !path.with_extension("tsv.bak").exists());
+        assert!(!wipe(&path).unwrap());
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
