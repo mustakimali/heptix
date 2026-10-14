@@ -55,6 +55,15 @@ wait_for() {
   return 1
 }
 
+# Waits for the client's stats to show five presses of F24 (key 194); on failure says what is there.
+five_presses_counted() {
+  stats=/home/tester/.local/state/heptix/stats.tsv
+  wait_for 20 grep -qE '^k [0-9-]+ 194 5$' "$stats" && return 0
+  echo "stats file:"; cat "$stats" 2>&1
+  echo "client log:"; journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service 2>&1 | tail -8
+  echo "reader log:"; journalctl -u heptix-reader.service --no-pager -o cat 2>&1 | tail -8
+  return 1
+}
 reader_log() { journalctl -u heptix-reader.service --no-pager -o cat 2>/dev/null; }
 client_log() { journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service 2>/dev/null; }
 reader_pid() { systemctl show -p MainPID --value heptix-reader.service; }
@@ -140,7 +149,7 @@ if [ -c /dev/uinput ]; then
   check "the keyboard sent its key presses" wait_for 15 grep -q pressed /tmp/uinput.out
   # Restarting the client makes it flush its stats (it does on SIGTERM).
   as_tester systemctl --user restart heptix.service
-  check "the five key presses reached the client and its stats" wait_for 15 sh -c "grep -qE '^k [0-9-]+ 194 5$' /home/tester/.local/state/heptix/stats.tsv"
+  check "the five key presses reached the client and its stats" five_presses_counted
   as_tester systemctl --user stop heptix.service
   check "the reader releases the device when the client stops" wait_for 15 sh -c "! ls -l /proc/$(reader_pid)/fd | grep -q event$EV"
   as_tester systemctl --user start heptix.service
