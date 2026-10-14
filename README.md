@@ -157,58 +157,37 @@ stops reading keyboards altogether.
 
 ## Use
 
-- `heptix` opens the settings editor (sound, volumes, tap length, scroll
-  density; changes preview as you make them, `s` saves and restarts the service).
-- The tab bar shows how the background service gets its input: "reader service
-  running" (service mode), a warning if it is not running, or "direct mode
-  (input group)".
-- The Settings view groups related options under **Sounds**, **Volume**,
-  **Touchpad** and **Activity** headers (`Enter` or `←/→` on a header folds it),
-  with a short explanation of the selected item underneath. In auto volume mode
-  only the mode and the auto reference are shown; custom mode shows the four
-  volumes. On small terminals the list scrolls.
-- The editor also has **Activity**, **Hours** and **Keys** views (`Tab` to
-  switch): a GitHub-style heatmap of your keystrokes, touchpad taps, clicks,
-  scroll ticks or scroll distance by day, a weekday-by-hour grid of when you
-  are active, your most and least used keys (plus a keyboard heatmap), and how
-  far you have scrolled today, this week and in total (km or miles, `u` to
-  switch). Under the Activity heatmap a table gives keys, taps, clicks, scroll
-  ticks and scroll distance for the selected day, today, this week, this month
-  and all time. `heptix --stats` prints a text summary with the same table. See Privacy for what is stored.
-- `heptix --run` runs with the saved settings, reading input through the reader
-  service when it is installed and directly otherwise; `--client` and `--direct`
-  force one. Other options override the saved settings (`heptix --help`).
-- Settings: `~/.config/heptix/config.toml` (created on first run). `enabled` at
-  the top is a master switch: set it to `false` (or turn off **Enabled**, the
-  first row in the editor) and heptix goes idle. It reads no input, plays
-  nothing and records nothing, and a restart after turning it back on resumes it.
-- Keyboard sounds (on by default, `bucklespring`): set `keyboard_sound` to
-  `off`, `thock`, `clicky`, `linear`, `buckling` (synthesised Model M-style
-  spring ping) or `bucklespring` (or use the editor). Separate down/up strokes, different sounds
-  for space and wide keys, and slight per-key pitch and level variation.
-  A key event only picks which click to play (see Privacy).
-  `bucklespring` plays recorded IBM Model M samples built into the binary
-  (from [bucklespring](https://github.com/zevv/bucklespring), GPL-2.0).
-  To use your own recordings, set `keyboard_sound` to a directory of
-  `<hex keycode>-0.wav` (press) and `-1.wav` (release) files.
-- Volume: `volume_mode` is `auto` (default) or `custom`. Auto plays heptix
-  quieter as your system volume rises, so it is never too loud at full system
-  volume; at or below `auto_reference` (default 50% on the volume slider) sounds
-  play at their normal level. The per-sound volumes (`volume`, `scroll_volume`,
-  `keyboard_volume`) are locked in auto mode and used as set in `custom` mode.
-  The system volume is read with `wpctl` (PipeWire) or `pactl`, only while
-  sounds are playing; without either tool auto mode changes nothing.
-- Mouse: `mouse_sound` (`recorded` by default, a real recording of a click and
-  its release; or the synthesised `tactile` and `soft`, or `off`) plays a
-  different sound for button down and button up, tuned slightly per button. The wheel plays one `scroll_sound` tick per notch (rate limited, and
-  smooth-scrolling wheels still tick once per notch's worth of movement). Only
-  buttons and the wheel are used. A touchpad's own pointer device is skipped and
-  repeated events are dropped, so nothing is played or counted twice.
-- Hotplug: keyboards, mice and receivers you plug in later are picked up
-  automatically (and picked up again after being unplugged); no restart needed.
-  `heptix --list` shows what is detected.
-- Sounds: `thud` (default tap), `haptic`, `tock`, `tick`, `crown` (default
-  scroll), `wheel_of_time` (a recorded picker-wheel tick, good for scrolling), or your own 16-bit WAV / linear-PCM CAF file path.
+- `heptix` opens the settings editor: sounds, volumes, tap length and scroll
+  density preview as you change them, and `s` saves and restarts the service.
+  The tab bar shows how the service gets its input (reader service, or direct
+  mode), with a warning if it is not running.
+- The **Activity**, **Hours** and **Keys** views (`Tab`) show a heatmap of
+  keystrokes, taps, clicks and scrolling by day, a weekday-by-hour grid, your
+  most and least used keys, and scroll distance (`u` switches km and miles).
+  `heptix --stats` prints the same table as text. See Privacy for what is stored.
+- `heptix --run` runs with the saved settings, through the reader service when
+  installed and directly otherwise; `--client` and `--direct` force one. Other
+  options override saved settings (`heptix --help`). `heptix --list` shows the
+  detected devices; keyboards and mice plugged in later are picked up.
+- Settings live in `~/.config/heptix/config.toml`. `enabled = false` is a master
+  switch: heptix reads, plays and records nothing until you turn it back on.
+
+Options in `config.toml` (or the editor):
+
+- `keyboard_sound`: `off`, `thock`, `clicky`, `linear`, `buckling`, or
+  `bucklespring` (default; recorded IBM Model M samples from
+  [bucklespring](https://github.com/zevv/bucklespring), GPL-2.0). A directory of
+  `<hex keycode>-0.wav` (press) and `-1.wav` (release) files uses your own.
+- `volume_mode`: `auto` (default) plays quieter as the system volume rises
+  (normal level at or below `auto_reference`, 50% by default); `custom` uses
+  `volume`, `scroll_volume`, `keyboard_volume` and `mouse_volume`. The system
+  volume is read with `wpctl` or `pactl`; without either, auto changes nothing.
+- `mouse_sound`: `recorded` (default), `tactile`, `soft` or `off`, with separate
+  button-down and button-up sounds. The wheel plays one `scroll_sound` tick per
+  notch. Only buttons and the wheel are used, and duplicate events are dropped.
+- Tap and scroll sounds: `thud` (default tap), `haptic`, `tock`, `tick`, `crown`
+  (default scroll), `wheel_of_time`, or the path to a 16-bit WAV or linear-PCM
+  CAF file.
 
 ## Build
 
