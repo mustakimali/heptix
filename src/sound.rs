@@ -246,6 +246,32 @@ pub fn load(spec: &str, volume: u32) -> Result<Pcm, String> {
     Err(format!("unknown sound '{spec}' (built-in: {}; or a .wav/.caf path)", SOUNDS.join(", ")))
 }
 
+/// A-weighted level in dB of 48 kHz mono s16 PCM (the first 50 ms), scaled by `gain`, so
+/// that sounds can be compared by how loud they seem rather than by their peak.
+#[cfg(test)]
+pub fn a_weighted_db(pcm: &[u8], gain: f32) -> f32 {
+    let x: Vec<f32> = pcm.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0 * gain).collect();
+    let n = x.len().min(2400);
+    let weight = |f: f32| {
+        let f2 = f * f;
+        let ra = 12194.0f32.powi(2) * f2 * f2
+            / ((f2 + 20.6f32.powi(2)) * ((f2 + 107.7f32.powi(2)) * (f2 + 737.9f32.powi(2))).sqrt() * (f2 + 12194.0f32.powi(2)));
+        ra / 0.7943 // 0 dB at 1 kHz
+    };
+    let mut power = 0.0f64;
+    for k in 1..n / 2 {
+        let f = k as f32 * RATE as f32 / n as f32;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, v) in x.iter().take(n).enumerate() {
+            let phase = -2.0 * std::f64::consts::PI * (k * i) as f64 / n as f64;
+            re += *v as f64 * phase.cos();
+            im += *v as f64 * phase.sin();
+        }
+        power += (re * re + im * im) / (n * n) as f64 * (weight(f) as f64).powi(2);
+    }
+    10.0 * (power.max(1e-20) as f32).log10()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

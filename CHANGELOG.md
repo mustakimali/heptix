@@ -5,6 +5,16 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Mouse clicks are quieter in auto volume mode (25, was 50) and the custom-mode
+  default for `mouse_volume` follows. The level is chosen by perceived loudness
+  (A-weighted), not by peak: the recorded click is a sharp 2-6 kHz transient that
+  sounded about 10 dB louder than the touchpad tap and 6 dB louder than the scroll
+  tick at the same peak. It now sits between a tap and a key click. The
+  synthesised `tactile` and `soft` button-down sounds are trimmed by about 5 dB so
+  one volume means one loudness across the mouse sounds. Saved `mouse_volume`
+  values are not changed.
+
 ## [0.8.0] - 2026-10-14
 
 ### Added

@@ -197,6 +197,10 @@ static SOFT: Profile = Profile {
     release_level: 0.5,
 };
 
+/// The synthesised button-down sounds come out about 5 dB(A) louder than the recording at the
+/// same volume, so they are trimmed to match: one volume then means one loudness.
+const SYNTH_DOWN_TRIM: f32 = 0.56;
+
 /// Right and middle buttons sound a little lower, side buttons a little higher.
 /// The recording is of a middle button, so it is the reference there.
 fn button_pitch(code: u16, recorded: bool) -> f32 {
@@ -255,7 +259,7 @@ impl Mouse {
                 .map(|_| Arc::new(sound::to_pcm(&render(hits, ms, Class::Normal, press, peak, &mut rng), 100)))
                 .collect()
         };
-        let down = bank(p.press, p.press_ms, true, 1.0);
+        let down = bank(p.press, p.press_ms, true, SYNTH_DOWN_TRIM);
         let up = bank(p.release, p.release_ms, false, p.release_level);
         Ok(Mouse { recorded: false, down, up, volume: volume as f32 / 100.0, rng: Rng::seeded() })
     }
@@ -291,14 +295,16 @@ mod tests {
     }
 
     #[test]
-    fn down_and_up_are_different_sounds_and_up_is_quieter() {
+    fn down_and_up_are_different_sounds_and_up_is_not_louder() {
+        use crate::sound::a_weighted_db;
         for name in SOUNDS {
             let m = Mouse::new(name, 100).unwrap();
             for v in 0..VARIANTS {
                 assert_ne!(m.down[v], m.up[v], "{name}");
-                assert!(peak(&m.up[v]) < peak(&m.down[v]), "{name}");
-                assert!(peak(&m.down[v]) > 20_000, "{name}");
+                assert!(peak(&m.down[v]) > 15_000, "{name}");
             }
+            // By how loud it seems (not by peak): a release is not noticeably louder than the press.
+            assert!(a_weighted_db(&m.up[0], 1.0) < a_weighted_db(&m.down[0], 1.0) + 3.0, "{name}");
             if *name != "recorded" {
                 assert_ne!(m.down[0], m.down[1], "{name}: variants differ");
             }
@@ -316,6 +322,30 @@ mod tests {
         }
         assert!(m.recorded);
         assert!(button_pitch(KeyCode::BTN_LEFT.0, true) > button_pitch(KeyCode::BTN_RIGHT.0, true));
+    }
+
+    #[test]
+    fn mouse_clicks_sit_between_a_tap_and_a_key_click_at_auto_levels() {
+        use crate::config::{AUTO_KEYBOARD_VOLUME, AUTO_MOUSE_VOLUME, AUTO_TAP_VOLUME};
+        use crate::sound::a_weighted_db;
+        let mean = 0.925; // the mean of the random level variation
+        let kb = crate::keyboard::Keyboard::new("bucklespring", 100).unwrap();
+        // Typical keys: letters, space and enter.
+        let keys: Vec<f32> = [30u16, 18, 57, 28]
+            .iter()
+            .map(|c| a_weighted_db(&kb.recorded_press(*c).unwrap(), AUTO_KEYBOARD_VOLUME as f32 / 100.0 * mean))
+            .collect();
+        let keyboard_db = keys.iter().sum::<f32>() / keys.len() as f32;
+        let tap_db = a_weighted_db(&crate::sound::load("thud", AUTO_TAP_VOLUME).unwrap(), 1.0);
+        for name in SOUNDS {
+            let m = Mouse::new(name, 100).unwrap();
+            let down = a_weighted_db(&m.down[0], AUTO_MOUSE_VOLUME as f32 / 100.0 * mean);
+            let up = a_weighted_db(&m.up[0], AUTO_MOUSE_VOLUME as f32 / 100.0 * mean);
+            // Not louder than typing, and not much quieter than a touchpad tap.
+            assert!(down <= keyboard_db, "{name} down {down:.1} dB(A) is louder than a key click ({keyboard_db:.1})");
+            assert!(down >= tap_db - 2.0, "{name} down {down:.1} dB(A) is much quieter than a tap ({tap_db:.1})");
+            assert!((up - down).abs() < 8.0, "{name}: up {up:.1} and down {down:.1} dB(A) are too far apart");
+        }
     }
 
     #[test]
