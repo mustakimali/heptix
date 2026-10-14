@@ -17,13 +17,15 @@
 .PHONY: build run install uninstall status logs logs-reader
 
 TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
+# Overridden by the installer tests, which use a binary that is already built.
+CARGO ?= cargo
 # Passed to the installer: make install MODE=service|direct, make install YES=1
 MODE ?=
 YES ?=
 
 ## build: Release build
 build:
-	cargo build --release
+	$(CARGO) build --release
 
 run:
 	cargo run -- --verbose
@@ -32,7 +34,7 @@ run:
 ##          service mode (recommended, needs sudo) or direct mode (not recommended).
 ##          Skip the question with: make install MODE=service  (or MODE=direct, YES=1)
 install:
-	cargo build --release
+	$(CARGO) build --release
 	rm -rf $(TARGET_DIR)/stage && mkdir -p $(TARGET_DIR)/stage
 	cp $(TARGET_DIR)/release/heptix $(TARGET_DIR)/stage/
 	cp -r packaging $(TARGET_DIR)/stage/packaging

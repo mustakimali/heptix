@@ -21,14 +21,14 @@ if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y --no-install-recommends systemd systemd-sysv dbus dbus-user-session \
-    sudo procps iproute2 python3 alsa-utils ca-certificates util-linux
+    sudo procps iproute2 python3 alsa-utils ca-certificates util-linux make
   rm -rf /var/lib/apt/lists/*
   userdel -r ubuntu 2>/dev/null || true   # Ubuntu images ship a user with uid 1000
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y systemd dbus-broker sudo procps-ng iproute python3 alsa-utils util-linux shadow-utils passwd
+  dnf install -y systemd dbus-broker sudo procps-ng iproute python3 alsa-utils util-linux shadow-utils passwd make
   dnf clean all
 elif command -v pacman >/dev/null 2>&1; then
-  pacman -Syu --noconfirm --needed systemd dbus sudo procps-ng iproute2 python alsa-utils util-linux shadow
+  pacman -Syu --noconfirm --needed systemd dbus sudo procps-ng iproute2 python alsa-utils util-linux shadow make
   rm -rf /var/cache/pacman/pkg/*
 else
   echo "no supported package manager" >&2

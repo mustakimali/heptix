@@ -91,6 +91,10 @@ jobs:
           name: heptix-musl
           path: bin
       - run: chmod +x bin/heptix
+      - name: Load uinput (the test sends real input events through a virtual keyboard)
+        run: |
+          sudo modprobe uinput || true
+          ls -l /dev/uinput || echo "no /dev/uinput: the events check will be skipped with a warning"
       - name: installer on ${{ matrix.distro }}
         run: tools/docker-test/run.sh bin/heptix ${{ matrix.distro }}
 

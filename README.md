@@ -223,9 +223,14 @@ test below on Debian, Ubuntu, Fedora, Arch and Alpine, and the NixOS module in a
 NixOS VM.
 
 `tools/docker-test/run.sh <static heptix binary> [debian|ubuntu|fedora|arch|alpine]`
-tests the installer end to end in a container running real systemd (Alpine has
-no systemd, so it checks that the installer refuses cleanly); see the script for
-how to build the musl binary it needs.
+tests the installer end to end in a container running real systemd: the real
+`make install` and `make uninstall` targets, the services starting and the client
+passing the reader's verification, refusals, reconnects, and real input events
+(a virtual keyboard created through `/dev/uinput` is picked up by the reader and
+its key presses show up in the client's stats; skipped with a warning where
+`/dev/uinput` is unavailable). Alpine has no systemd, so it checks that the
+installer refuses cleanly. See the script for how to build the musl binary it
+needs.
 
 Uninstall (either mode; your settings and stats are kept):
 `curl -fsSL https://raw.githubusercontent.com/mustakimali/heptix/main/install.sh | sh -s -- --uninstall`,
