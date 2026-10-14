@@ -68,7 +68,7 @@ docker build -q --build-arg BASE="$BASE" -t "$IMAGE" "$HERE" >/dev/null
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 set -- --cgroupns=host \
-  --cap-add SYS_ADMIN --cap-add SYS_PTRACE --cap-add NET_ADMIN \
+  --cap-add SYS_ADMIN --cap-add SYS_PTRACE --cap-add NET_ADMIN --cap-add AUDIT_CONTROL \
   --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
   --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$stage":/stage:ro
