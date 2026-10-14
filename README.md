@@ -143,11 +143,12 @@ Activity stats are on by default:
 - **Never**: which keys you pressed in what order, the time between keys, the
   text you typed, window titles or anything else. Counts can still show
   habits, such as when you are at the computer.
-- **Where**: `~/.local/state/heptix/stats.tsv`, readable only by you, kept for
-  53 weeks plus all-time totals. It never leaves your machine.
+- **Where**: `~/.local/state/heptix/stats.tsv` (earlier days) and
+  `stats.live.tsv` (recent days and the totals), plain text readable only by
+  you, kept for 53 weeks plus all-time totals. It never leaves your machine.
 - **Control**: turn it off with `stats = false` (or in the editor), stop only
   the per-key counts with `stats_keys = false`, and delete everything with
-  `heptix --stats-reset` or `X` in the Activity view.
+  `heptix --stats-reset` or `X` in the Activity view (this removes both files).
 
 Keyboard and mouse sounds (also on by default) only react to a key or button
 going down or up, and to wheel notches, to pick a sound. Mouse movement events
