@@ -49,6 +49,8 @@ stage=$(mktemp -d)
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$stage"' EXIT
 cp "$BIN" "$stage/heptix"
 cp -r "$ROOT/packaging" "$stage/packaging"
+mkdir "$stage/tools"
+cp "$ROOT/tools/test-signature.sh" "$stage/tools/"
 cp "$ROOT/install.sh" "$ROOT/Makefile" "$HERE/checks.sh" "$HERE/uinput_key.py" "$HERE/evcount.py" "$stage/"
 chmod -R a+rX "$stage"
 
