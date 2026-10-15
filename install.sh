@@ -179,10 +179,36 @@ ensure_audio_player() {
   fi
 }
 
-# verify_signature <tarball>: checks the release was built by this repository's workflow
-# (a GitHub build attestation), with the GitHub CLI when it is installed and logged in.
-# Never required: without gh, or for an older release that has no attestation, it says so
-# and goes on with the checksum alone. A signature that does not verify stops the install.
+# The first release whose tarballs carry an attestation; older ones never will.
+FIRST_SIGNED=0.9.3
+
+# version_ge <a> <b>: whether dotted version a is at least b (numbers only).
+version_ge() {
+  _a=$1; _b=$2
+  for _i in 1 2 3; do
+    _x=$(printf '%s' "$_a" | cut -d. -f$_i); _y=$(printf '%s' "$_b" | cut -d. -f$_i)
+    _x=${_x:-0}; _y=${_y:-0}
+    if [ "$_x" -gt "$_y" ]; then return 0; fi
+    if [ "$_x" -lt "$_y" ]; then return 1; fi
+  done
+  return 0
+}
+
+# release_version: the version being installed ("0.9.3"), from the tag GitHub redirects
+# "latest" to. Empty when unknown. HEPTIX_RELEASE_VERSION overrides it (for tests).
+release_version() {
+  if [ -n "${HEPTIX_RELEASE_VERSION:-}" ]; then printf '%s' "$HEPTIX_RELEASE_VERSION"; return; fi
+  [ -z "${HEPTIX_BASE_URL:-}" ] || return 0
+  curl -fsSI -o /dev/null -w '%{redirect_url}' "https://github.com/$REPO/releases/latest/download/$1" 2>/dev/null |
+    sed -n 's#.*/download/v\([0-9][0-9.]*\)/.*#\1#p'
+}
+
+# verify_signature <tarball> <asset name>: checks the release was built by this repository's
+# release workflow (a GitHub build attestation), with the GitHub CLI when it is installed and
+# logged in. Never required: without gh it says so and goes on with the checksum alone.
+# But once gh runs, a release that should be signed (0.9.3 and later) must verify: a missing
+# attestation is exactly what a replaced tarball looks like. Only older releases, which
+# were never signed, and a download location you chose yourself, are let through.
 verify_signature() {
   if [ "$NO_VERIFY" = 1 ]; then
     say "Skipping the signature check (--no-verify)."
@@ -196,14 +222,23 @@ verify_signature() {
     say "Signature not checked: log in with 'gh auth login' to verify the release."
     return 0
   fi
-  if out=$(gh attestation verify "$1" --repo "$REPO" 2>&1); then
+  if out=$(gh attestation verify "$1" --repo "$REPO" --signer-workflow "$REPO/.github/workflows/release.yml" 2>&1); then
     say "Signature verified: built by the $REPO release workflow."
     return 0
   fi
   case "$out" in
     *"HTTP 404"*)
-      say "Signature not checked: this release has no attestation (older releases are not signed)."
-      return 0
+      version=$(release_version "$2")
+      if [ -z "${HEPTIX_RELEASE_VERSION:-}" ] && [ -n "${HEPTIX_BASE_URL:-}" ]; then
+        say "Signature not checked: no attestation for a download from a location you chose."
+        return 0
+      fi
+      if [ -n "$version" ] && ! version_ge "$version" "$FIRST_SIGNED"; then
+        say "Signature not checked: release $version has no attestation (releases before $FIRST_SIGNED are not signed)."
+        return 0
+      fi
+      warn "$out"
+      die "This release should carry a signature but has none: not installing. (--no-verify skips the check.)"
       ;;
   esac
   warn "$out"
@@ -225,7 +260,7 @@ obtain() {
   curl -fsSL "$url" -o "$tmp/$name"
   curl -fsSL "$url.sha256" -o "$tmp/$name.sha256"
   (cd "$tmp" && sha256sum -c "$name.sha256" >/dev/null) || die "Checksum mismatch."
-  verify_signature "$tmp/$name"
+  verify_signature "$tmp/$name" "$name"
   tar -xzf "$tmp/$name" -C "$tmp"
   STAGE="$tmp"
 }

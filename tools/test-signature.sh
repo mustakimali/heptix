@@ -40,7 +40,7 @@ fake_gh() {
 #!/bin/sh
 case "\$1 \$2" in
   "auth status") exit $1 ;;
-  "attestation verify") echo "$3"; exit $2 ;;
+  "attestation verify") echo "\$@" >> "$work/gh-args"; echo "$3"; exit $2 ;;
 esac
 exit 99
 GH
@@ -71,14 +71,37 @@ check "with gh logged out the install goes on and says to log in" \
   sh -c "grep -q 'gh auth login' '$work/out' && ! grep -q 'failed signature' '$work/out'"
 
 fake_gh 0 0 "Loaded digest sha256:abc for file"
+rm -f "$work/gh-args"
 run_install
 check "a verified signature is reported and the install goes on" \
   sh -c "grep -q 'Signature verified' '$work/out'"
+check "gh is told to accept only the release workflow as the signer" \
+  sh -c "grep -q -- '--signer-workflow mustakimali/heptix/.github/workflows/release.yml' '$work/gh-args' && grep -q -- '--repo mustakimali/heptix' '$work/gh-args'"
 
 fake_gh 0 1 "Error: HTTP 404: Not Found (https://api.github.com/repos/x/y/attestations/sha256:abc)"
+HEPTIX_RELEASE_VERSION=0.9.2 run_install
+check "a release from before signing started goes on, with a note" \
+  sh -c "grep -q 'release 0.9.2 has no attestation' '$work/out' && ! grep -q 'should carry' '$work/out'"
+
+HEPTIX_RELEASE_VERSION=0.9.3 run_install; code=$?
+check "the first signed release must have an attestation: a missing one stops the install" \
+  sh -c "test $code -ne 0 && grep -q 'should carry a signature' '$work/out' && ! grep -q '^+ ' '$work/out'"
+
+HEPTIX_RELEASE_VERSION=0.10.0 run_install; code=$?
+check "a later release must have one too (versions compare as numbers)" \
+  sh -c "test $code -ne 0 && grep -q 'should carry a signature' '$work/out'"
+
+HEPTIX_RELEASE_VERSION=0.9.10 run_install; code=$?
+check "0.9.10 is newer than 0.9.3, not older" \
+  sh -c "test $code -ne 0 && grep -q 'should carry a signature' '$work/out'"
+
 run_install
-check "a release with no attestation goes on, with a note" \
-  sh -c "grep -q 'has no attestation' '$work/out'"
+check "a download from a location you chose goes on, with a note" \
+  sh -c "grep -q 'location you chose' '$work/out'"
+
+HEPTIX_RELEASE_VERSION=0.9.3 run_install --no-verify
+check "--no-verify still skips the check on a signed release" \
+  sh -c "grep -q 'Skipping the signature check' '$work/out' && grep -q '^+ ' '$work/out'"
 
 fake_gh 0 1 "X Verification failed: the digest does not match"
 run_install; code=$?
