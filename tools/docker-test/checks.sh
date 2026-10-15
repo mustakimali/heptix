@@ -233,8 +233,16 @@ check "reader service is active again" wait_for 20 systemctl is-active --quiet h
 check "client reconnected through the system unit" wait_for 20 sh -c "journalctl --no-pager -o cat _UID=1000 _SYSTEMD_USER_UNIT=heptix.service | grep -c 'reader: connected' | grep -qv '^0$'"
 check "the installer offered to remove the input group" grep -q "input' group" /tmp/install-switch.log
 
-as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --uninstall >/dev/null 2>&1
+run_logged /tmp/uninstall.log as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --uninstall --yes
 check "final uninstall leaves nothing behind" sh -c '! test -e /usr/lib/heptix && ! test -e /home/tester/.local/bin/heptix'
+check "uninstall offers the input group but keeps it by default" sh -c "grep -q 'gpasswd -d tester input' /tmp/uninstall.log && id -nG tester | tr ' ' '\\n' | grep -qx input"
+
+echo "== uninstall taking the user out of the input group"
+run_logged /tmp/install-direct2.log as_tester sh -c 'cd /home/tester/repo && make install MODE=direct YES=1 CARGO=true'
+run_logged /tmp/uninstall-group.log as_tester env HEPTIX_LOCAL_DIR=/stage sh /stage/install.sh --uninstall --remove-input-group
+check "uninstall --remove-input-group exits cleanly" test $? -eq 0
+check "the user is out of the input group" sh -c '! id -nG tester | tr " " "\n" | grep -qx input'
+check "nothing is left of the direct install" sh -c '! test -e /home/tester/.local/bin/heptix && ! test -e /home/tester/.config/systemd/user/heptix.service'
 
 echo
 echo "$PASS passed, $FAIL failed"
