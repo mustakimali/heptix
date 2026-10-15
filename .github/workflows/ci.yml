@@ -47,7 +47,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck -s sh install.sh tools/docker-test/*.sh
+          shellcheck -s sh install.sh tools/*.sh tools/docker-test/*.sh
+      - name: installer signature check (fake release, fake gh)
+        run: sh tools/test-signature.sh
 
   test:
     strategy:

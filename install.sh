@@ -24,7 +24,7 @@
 #     you in the 'input' group. Any program you run can then read all keyboard
 #     input on the machine.
 #
-# Usage: install.sh [--service | --direct] [--yes] [--uninstall]
+# Usage: install.sh [--service | --direct] [--yes] [--uninstall] [--remove-input-group] [--no-verify]
 # Testing: HEPTIX_DRY_RUN=1 prints what would be done; HEPTIX_LOCAL_DIR=<dir>
 # (containing 'heptix' and 'packaging/') installs from there instead of downloading.
 set -eu
@@ -41,16 +41,22 @@ SYSUSERS="/etc/sysusers.d/heptix.conf"
 MODE="${HEPTIX_MODE:-}"
 ASSUME_YES=0
 UNINSTALL=0
+REMOVE_GROUP=0
+NO_VERIFY="${HEPTIX_NO_VERIFY:-0}"
 DRY="${HEPTIX_DRY_RUN:-0}"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--service | --direct] [--yes] [--uninstall]
+Usage: install.sh [--service | --direct] [--yes] [--uninstall] [--remove-input-group] [--no-verify]
 
   --service    reader service (default, recommended): needs sudo, keeps you out of the 'input' group
   --direct     heptix reads the devices itself (not recommended): needs the 'input' group
   --yes        do not ask questions; take the defaults
   --uninstall  remove heptix (keeps your settings and stats)
+  --remove-input-group  take you out of the 'input' group without asking (when you are in it
+               and heptix does not need it: after switching to service mode, or on --uninstall)
+  --no-verify  do not check the release's signature (it is checked when the GitHub CLI,
+               gh, is installed and logged in; otherwise the checksum is all there is)
 EOF
 }
 
@@ -60,6 +66,8 @@ for arg in "$@"; do
     --direct) MODE=direct ;;
     --yes | -y) ASSUME_YES=1 ;;
     --uninstall) UNINSTALL=1 ;;
+    --remove-input-group) REMOVE_GROUP=1 ;;
+    --no-verify) NO_VERIFY=1 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; usage >&2; exit 2 ;;
   esac
@@ -108,6 +116,27 @@ ask() {
   case "$ans" in "") [ "$2" = Y ] ;; [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
+# offer_leave_input_group <why>: membership of 'input' lets any program you run read your
+# keyboard, so when heptix does not need it, offer to drop it. Never silent: the default
+# is to keep it (you may need it for something else), and --remove-input-group says yes.
+offer_leave_input_group() {
+  id -nG "${USER:-$(id -un)}" 2>/dev/null | tr ' ' '\n' | grep -qx input || return 0
+  say
+  say "You are in the 'input' group, which lets any program you run read your keyboard."
+  say "$1"
+  if [ -e /etc/NIXOS ]; then
+    say "On NixOS the group comes from your configuration: remove \"input\" from"
+    say "users.users.${USER:-you}.extraGroups, rebuild, then log out and in."
+    return 0
+  fi
+  if [ "$REMOVE_GROUP" = 1 ] || ask "Remove yourself from the 'input' group now? [y/N]" N; then
+    as_root gpasswd -d "${USER:-$(id -un)}" input
+    say "Log out and back in for this to take effect."
+  else
+    say "To remove it later: sudo gpasswd -d ${USER:-$(id -un)} input   (then log out and in)"
+  fi
+}
+
 [ "$(uname -s)" = Linux ] || die "heptix only supports Linux."
 case "$(uname -m)" in
   x86_64 | amd64) arch=x86_64 ;;
@@ -150,6 +179,37 @@ ensure_audio_player() {
   fi
 }
 
+# verify_signature <tarball>: checks the release was built by this repository's workflow
+# (a GitHub build attestation), with the GitHub CLI when it is installed and logged in.
+# Never required: without gh, or for an older release that has no attestation, it says so
+# and goes on with the checksum alone. A signature that does not verify stops the install.
+verify_signature() {
+  if [ "$NO_VERIFY" = 1 ]; then
+    say "Skipping the signature check (--no-verify)."
+    return 0
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    say "Signature not checked: install the GitHub CLI (gh) and log in to verify the release."
+    return 0
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    say "Signature not checked: log in with 'gh auth login' to verify the release."
+    return 0
+  fi
+  if out=$(gh attestation verify "$1" --repo "$REPO" 2>&1); then
+    say "Signature verified: built by the $REPO release workflow."
+    return 0
+  fi
+  case "$out" in
+    *"HTTP 404"*)
+      say "Signature not checked: this release has no attestation (older releases are not signed)."
+      return 0
+      ;;
+  esac
+  warn "$out"
+  die "The release failed signature verification: not installing. (--no-verify skips the check.)"
+}
+
 # Leaves the files to install in $STAGE: the 'heptix' binary and 'packaging/'.
 obtain() {
   if [ -n "${HEPTIX_LOCAL_DIR:-}" ]; then
@@ -165,6 +225,7 @@ obtain() {
   curl -fsSL "$url" -o "$tmp/$name"
   curl -fsSL "$url.sha256" -o "$tmp/$name.sha256"
   (cd "$tmp" && sha256sum -c "$name.sha256" >/dev/null) || die "Checksum mismatch."
+  verify_signature "$tmp/$name"
   tar -xzf "$tmp/$name" -C "$tmp"
   STAGE="$tmp"
 }
@@ -237,17 +298,7 @@ service_install() {
     warn "The reader service is not running. See: journalctl -u heptix-reader.service"
   fi
 
-  if id -nG | tr ' ' '\n' | grep -qx input; then
-    say
-    say "You are in the 'input' group, which lets any program you run read your keyboard."
-    say "Service mode does not need it."
-    if ask "Remove yourself from the 'input' group now? [y/N]" N; then
-      as_root gpasswd -d "$USER" input
-      say "Log out and back in for this to take effect."
-    else
-      say "To remove it later: sudo gpasswd -d $USER input   (then log out and in)"
-    fi
-  fi
+  offer_leave_input_group "Service mode does not need it."
   EDITOR_BIN="$SYS_LINK"
 }
 
@@ -315,6 +366,10 @@ UNIT
 }
 
 uninstall() {
+  found=0
+  for f in "$UNIT_DIR/heptix.service" "$BIN_DIR/heptix" "$READER_UNIT" "$SYS_BIN"; do
+    if [ -e "$f" ]; then found=1; fi
+  done
   say "Removing heptix ..."
   run systemctl --user disable --now heptix.service 2>/dev/null || true
   run rm -f "$UNIT_DIR/heptix.service" "$BIN_DIR/heptix"
@@ -327,6 +382,9 @@ uninstall() {
   fi
   run systemctl --user daemon-reload
   say "Your settings (~/.config/heptix) and stats (~/.local/state/heptix) were kept."
+  if [ "$found" = 1 ]; then
+    offer_leave_input_group "Nothing heptix installs needs it; only keep it if another program does."
+  fi
 }
 
 if [ "$UNINSTALL" = 1 ]; then
