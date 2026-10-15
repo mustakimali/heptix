@@ -244,6 +244,15 @@ check "uninstall --remove-input-group exits cleanly" test $? -eq 0
 check "the user is out of the input group" sh -c '! id -nG tester | tr " " "\n" | grep -qx input'
 check "nothing is left of the direct install" sh -c '! test -e /home/tester/.local/bin/heptix && ! test -e /home/tester/.config/systemd/user/heptix.service'
 
+# The signature check, with a fake release and a fake gh (no network here): a verified
+# signature goes on, and a failed or missing one stops the install, under this distro's sh.
+# /tmp is mounted noexec in the container, so the fake gh has to live in /var/tmp.
+echo "== release signature check (verified, forged and missing attestations)"
+TMPDIR=/var/tmp sh /stage/tools/test-signature.sh >/tmp/signature.log 2>&1
+sig=$?
+cat /tmp/signature.log
+check "the installer accepts a verified signature and refuses a forged or missing one" test $sig -eq 0
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
