@@ -55,6 +55,10 @@ jobs:
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write      # to sign the attestation (keyless, with this workflow's identity)
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
@@ -69,6 +73,12 @@ jobs:
           cp -r packaging dist/packaging
           tar -czf "$name.tar.gz" -C dist heptix packaging
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      # A signed statement that this tarball was built from this repository by this workflow.
+      # install.sh checks it when the GitHub CLI is available:
+      #   gh attestation verify heptix-<target>.tar.gz --repo mustakimali/heptix
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: heptix-*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
