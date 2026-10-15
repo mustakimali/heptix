@@ -44,10 +44,26 @@ The installer asks how heptix should read your keyboard and touchpad:
    screens.
 
 Choose with `--service` or `--direct`, take the defaults with `--yes`, and
-remove everything with `--uninstall` (your settings and stats are kept). Needs
+remove everything with `--uninstall` (your settings and stats are kept). If you
+are in the `input` group, the installer and `--uninstall` offer to take you out
+of it (the default is to keep it; `--remove-input-group` says yes). Needs
 systemd and an audio server (PipeWire, PulseAudio or ALSA). If no audio player
 (`pw-cat`, `paplay` or `aplay`) is installed, the script installs the one
 matching your sound server with `apt`, `dnf`, `pacman` or `zypper`.
+
+**Signed releases.** Each release tarball carries a GitHub build attestation: a
+signed statement that it was built from this repository by its release
+workflow, so a replaced download is caught even if its checksum was replaced
+too. The installer checks it when the [GitHub CLI](https://cli.github.com) (`gh`)
+is installed and logged in. Without `gh` it says it did not check and carries
+on with the checksum; a signature that fails stops the install, and
+`--no-verify` skips the check. To check by hand:
+
+```sh
+gh attestation verify heptix-x86_64-unknown-linux-musl.tar.gz --repo mustakimali/heptix
+```
+
+Releases made before signing was added have no attestation.
 
 **From source** (needs a Rust toolchain):
 
