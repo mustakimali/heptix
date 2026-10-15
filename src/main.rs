@@ -16,6 +16,7 @@
 
 mod client;
 mod config;
+mod demo;
 mod devices;
 mod harden;
 mod heatmap;
@@ -85,6 +86,8 @@ OPTIONS:
   --stats             Print your activity stats (keys, taps, scrolling) and exit
   --stats-reset       Delete all stored activity stats and exit
   --preview           Play the tap and scroll sounds once and exit
+  --demo              Simulate typing, clicks and taps, with the sounds and a keyboard, mouse and
+                      touchpad that light up. Reads no devices and records no stats. q quits
   --verbose           Print every detected tap/scroll (key presses are never printed)
   -h, --help          Show this help
 ";
@@ -120,6 +123,7 @@ struct Cli {
     reader_unsafe_install: bool,
     tui: bool,
     list: bool,
+    demo: bool,
     info: bool,
     preview: bool,
     stats: bool,
@@ -141,6 +145,7 @@ fn parse_args() -> Cli {
         reader_unsafe_install: false,
         tui: false,
         list: false,
+        demo: false,
         info: false,
         preview: false,
         stats: false,
@@ -179,6 +184,7 @@ fn parse_args() -> Cli {
             }
             "--list" => c.list = true,
             "--info" => c.info = true,
+            "--demo" => c.demo = true,
             "--preview" => c.preview = true,
             "--stats" => c.stats = true,
             "--stats-reset" => c.stats_reset = true,
@@ -352,7 +358,7 @@ fn main() {
         return;
     }
 
-    if !settings.enabled && !cli.preview {
+    if !settings.enabled && !cli.preview && !cli.demo {
         // Idle rather than exit, so the service stays up and a restart (after
         // turning it back on) simply works.
         eprintln!("heptix is turned off (enabled = false): not reading input, playing sounds or recording stats");
@@ -365,7 +371,7 @@ fn main() {
 
     // From here on this process holds raw input events: make it hard to inspect, before
     // any other thread exists. (The reader's checks for the client rely on this.)
-    if !cli.preview {
+    if !cli.preview && !cli.demo {
         if let Err(e) = harden::harden_process() {
             eprintln!("cannot harden the process: {e}");
             exit(1);
@@ -389,6 +395,15 @@ fn main() {
         })
     });
     let player = player::Player::start();
+
+    if cli.demo {
+        let audio = demo::Audio { keyboard, mouse, tap: tap_pcm, scroll: scroll_pcm, player };
+        if let Err(e) = demo::run(&settings, audio) {
+            eprintln!("demo: {e} (it needs a terminal)");
+            exit(1);
+        }
+        return;
+    }
 
     if cli.preview {
         if settings.is_auto_volume() {

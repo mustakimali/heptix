@@ -150,10 +150,10 @@ fn help(item: Item) -> [&'static str; 2] {
     }
 }
 
-struct RawMode(libc::termios);
+pub(crate) struct RawMode(libc::termios);
 
 impl RawMode {
-    fn enter() -> io::Result<Self> {
+    pub(crate) fn enter() -> io::Result<Self> {
         unsafe {
             let mut t: libc::termios = std::mem::zeroed();
             if libc::tcgetattr(0, &mut t) != 0 {
@@ -444,7 +444,7 @@ fn term_rows() -> usize {
     }
 }
 
-fn term_width() -> usize {
+pub(crate) fn term_width() -> usize {
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
         if libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 {

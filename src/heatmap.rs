@@ -236,21 +236,25 @@ pub fn key_bars(stats: &Stats, from: i32, to: i32) -> Vec<String> {
     lines
 }
 
+/// One keyboard row: (evdev code, label, width).
+pub(crate) type KeyRow = &'static [(u16, &'static str, usize)];
+
+/// US-QWERTY keyboard, by physical position. Every row is 45 columns wide.
+pub(crate) const KEYBOARD_ROWS: [KeyRow; 5] = [
+    &[(41, "`", 3), (2, "1", 3), (3, "2", 3), (4, "3", 3), (5, "4", 3), (6, "5", 3), (7, "6", 3), (8, "7", 3), (9, "8", 3), (10, "9", 3), (11, "0", 3), (12, "-", 3), (13, "=", 3), (14, "Bksp", 6)],
+    &[(15, "Tab", 5), (16, "Q", 3), (17, "W", 3), (18, "E", 3), (19, "R", 3), (20, "T", 3), (21, "Y", 3), (22, "U", 3), (23, "I", 3), (24, "O", 3), (25, "P", 3), (26, "[", 3), (27, "]", 3), (43, "\\", 4)],
+    &[(58, "Caps", 6), (30, "A", 3), (31, "S", 3), (32, "D", 3), (33, "F", 3), (34, "G", 3), (35, "H", 3), (36, "J", 3), (37, "K", 3), (38, "L", 3), (39, ";", 3), (40, "'", 3), (28, "Enter", 6)],
+    &[(42, "Shift", 7), (44, "Z", 3), (45, "X", 3), (46, "C", 3), (47, "V", 3), (48, "B", 3), (49, "N", 3), (50, "M", 3), (51, ",", 3), (52, ".", 3), (53, "/", 3), (54, "Shift", 8)],
+    &[(29, "Ctrl", 5), (125, "Sup", 4), (56, "Alt", 4), (57, "Space", 23), (100, "Alt", 4), (97, "Ctrl", 5)],
+];
+
 /// US-QWERTY keyboard (physical positions) coloured by how often each key was pressed.
 pub fn keyboard(stats: &Stats, from: i32, to: i32, color: bool) -> Vec<String> {
-    // (evdev code, label, width). Every row is 45 columns wide.
-    type Row = &'static [(u16, &'static str, usize)];
-    const ROWS: [Row; 5] = [
-        &[(41, "`", 3), (2, "1", 3), (3, "2", 3), (4, "3", 3), (5, "4", 3), (6, "5", 3), (7, "6", 3), (8, "7", 3), (9, "8", 3), (10, "9", 3), (11, "0", 3), (12, "-", 3), (13, "=", 3), (14, "Bksp", 6)],
-        &[(15, "Tab", 5), (16, "Q", 3), (17, "W", 3), (18, "E", 3), (19, "R", 3), (20, "T", 3), (21, "Y", 3), (22, "U", 3), (23, "I", 3), (24, "O", 3), (25, "P", 3), (26, "[", 3), (27, "]", 3), (43, "\\", 4)],
-        &[(58, "Caps", 6), (30, "A", 3), (31, "S", 3), (32, "D", 3), (33, "F", 3), (34, "G", 3), (35, "H", 3), (36, "J", 3), (37, "K", 3), (38, "L", 3), (39, ";", 3), (40, "'", 3), (28, "Enter", 6)],
-        &[(42, "Shift", 7), (44, "Z", 3), (45, "X", 3), (46, "C", 3), (47, "V", 3), (48, "B", 3), (49, "N", 3), (50, "M", 3), (51, ",", 3), (52, ".", 3), (53, "/", 3), (54, "Shift", 8)],
-        &[(29, "Ctrl", 5), (125, "Sup", 4), (56, "Alt", 4), (57, "Space", 23), (100, "Alt", 4), (97, "Ctrl", 5)],
-    ];
     let totals = stats.key_totals(from, to);
     let count = |code: u16| totals.iter().find(|(c, _)| *c == code).map_or(0, |(_, n)| *n);
     let t = thresholds(totals.iter().map(|(_, n)| *n));
-    ROWS.iter()
+    KEYBOARD_ROWS
+        .iter()
         .map(|row| {
             row.iter()
                 .map(|&(code, label, width)| {

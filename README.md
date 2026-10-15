@@ -170,6 +170,10 @@ stops reading keyboards altogether.
   installed and directly otherwise; `--client` and `--direct` force one. Other
   options override saved settings (`heptix --help`). `heptix --list` shows the
   detected devices; keyboards and mice plugged in later are picked up.
+- `heptix --demo` plays a simulated stretch of typing, mouse clicks, touchpad
+  taps and scrolling with your chosen sounds, and draws a keyboard, a mouse and a
+  touchpad that light up as they are used (`q` quits, `+` and `-` change the
+  speed). It reads nothing from your devices and records nothing in your stats.
 - `heptix --info` shows the version, revision and build date, the running mode
   (service or direct), the state of the client and reader services, the socket
   (path, owner, connected clients), the settings and stats files, and a status
