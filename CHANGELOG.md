@@ -5,6 +5,25 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-15
+
+### Added
+- Release tarballs carry a GitHub build attestation (a signed statement that they
+  were built from this repository by its release workflow). `install.sh` verifies
+  it when the GitHub CLI (`gh`) is installed and logged in; otherwise it says the
+  signature was not checked and goes on with the checksum, as before. A signature
+  that fails to verify stops the install. `--no-verify` (or `HEPTIX_NO_VERIFY=1`)
+  skips the check. Releases made before this have no attestation and install as
+  usual.
+- `install.sh --remove-input-group` takes you out of the `input` group without
+  asking, when heptix does not need it.
+
+### Changed
+- `install.sh --uninstall` now offers to take you out of the `input` group, which
+  direct mode added you to and which lets any program you run read your keyboard.
+  The default is to keep it, since something else may use it. On NixOS it points
+  at `users.users.<name>.extraGroups` instead of running `gpasswd`.
+
 ## [0.9.2] - 2026-10-15
 
 ### Added
