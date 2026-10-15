@@ -56,14 +56,15 @@ signed statement that it was built from this repository by its release
 workflow, so a replaced download is caught even if its checksum was replaced
 too. The installer checks it when the [GitHub CLI](https://cli.github.com) (`gh`)
 is installed and logged in. Without `gh` it says it did not check and carries
-on with the checksum; a signature that fails stops the install, and
-`--no-verify` skips the check. To check by hand:
+on with the checksum. With `gh`, a signature that fails to verify stops the
+install, and so does a missing one on a release that should have it (0.9.3 and
+later): a replaced download has no attestation. `--no-verify` skips the check. To check by hand:
 
 ```sh
 gh attestation verify heptix-x86_64-unknown-linux-musl.tar.gz --repo mustakimali/heptix
 ```
 
-Releases made before signing was added have no attestation.
+Releases before 0.9.3 were never signed and install as before.
 
 **From source** (needs a Rust toolchain):
 
