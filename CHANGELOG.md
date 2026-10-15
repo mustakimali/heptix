@@ -5,6 +5,17 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-15
+
+### Fixed
+- The installer's signature check let a replaced tarball through: a file nobody
+  signed has no attestation, and that was treated like an old unsigned release.
+  Now a missing attestation stops the install for any release from 0.9.3 on (the
+  version comes from the tag GitHub redirects "latest" to), and only the
+  releases before it, which were never signed, or a download location you chose
+  yourself, go on with a note. The signer must also be the release workflow, not
+  just any workflow in the repository.
+
 ## [0.9.3] - 2026-10-15
 
 ### Added
