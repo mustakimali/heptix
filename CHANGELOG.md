@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-15
+
+### Added
+- `heptix --demo` simulates typing, mouse clicks, touchpad taps and scrolling with
+  your chosen sounds, and shows a keyboard, a mouse and a touchpad that light up as
+  they are used. It reads no devices and records no stats, so it is safe to run next
+  to the service. `q` quits; `+` and `-` change the speed.
+
 ## [0.9.1] - 2026-10-14
 
 ### Added
